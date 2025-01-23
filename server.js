@@ -13,7 +13,10 @@ app.use(express.json());
 
 // Kết nối MongoDB
 connectDB();
-
+// API routes
+app.get('/', (req, res) => {
+  res.send('Server Node.js đang chạy!');
+});
 // Cron job dọn dẹp token hết hạn mỗi ngày
 cron.schedule('0 0 * * *', () => {
   cleanupExpiredTokens();
