@@ -62,5 +62,46 @@ const getCommandAndUpdateStatus = async (req, res) => {
     res.status(500).json({ message: 'Lỗi khi lấy lệnh', error: error.message });
   }
 };
-
-module.exports = { getCommandAndUpdateStatus };
+const uploadGocdeFile = async (req, res) => {
+  try {
+    const { fileName, fileContent, printId } = req.body;
+    const db = getDB();
+    const result = await db.collection('gcodefile').insertOne({ fileName, fileContent, printId });
+    if (result.insertedCount === 0) {
+      return res.status(500).json({ message: 'Lỗi khi thêm file G-code' });
+    }
+    res.status(200).json({ message: 'Đã thêm file G-code' });
+  } catch (error) {
+    res.status(500).json({ message: 'Lỗi khi thêm file G-code', error: error.message });
+  }
+}
+const sendCommand = async (req, res) => {
+  try {
+    const { command,id } = req.body;
+    const db = getDB();
+    const result = await db.collection('3dprint').updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { command } },
+      { upsert: true })
+    if (result.insertedCount === 0) {
+      return res.status(500).json({ message: 'Lỗi khi gửi lệnh' });
+    }
+    res.status(200).json({ message: 'Đã gửi lệnh' });
+  } catch (error) {
+    res.status(500).json({ message: 'Lỗi khi gửi lệnh', error: error.message });
+  }
+}
+const addPrinter = async (req, res) => {
+  try {
+    const { name, type,filamentColer,size } = req.body;
+    const db = getDB();
+    const result = await db.collection('printer').insertOne({ name, type,filamentColer,size });
+    if (result.insertedCount === 0) {
+      return res.status(500).json({ message: 'Lỗi khi thêm máy in' });
+    }
+    res.status(200).json({ message: 'Đã thêm máy in' });
+  } catch (error) {
+    res.status(500).json({ message: 'Lỗi khi thêm máy in', error: error.message });
+  }
+}
+module.exports = { getCommandAndUpdateStatus,uploadGocdeFile,sendCommand,addPrinter };
