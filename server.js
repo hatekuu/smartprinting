@@ -4,6 +4,7 @@ const authRoutes = require('./routes/authRoutes');
 const managerRoutes = require('./routes/managerRoutes');
 const productRoutes = require('./routes/productRoutes');
 const userRoutes = require('./routes/userRoutes');
+const printRoutes = require('./routes/3dprintRoutes');
 const cron = require('node-cron');
 const { cleanupExpiredTokens } = require('./services/blacklistService');
 const cors = require('cors');
@@ -39,7 +40,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/manager', managerRoutes);
 app.use('/api/product', productRoutes);
 app.use('/api/user', userRoutes);
-
+app.use('/api/3dprint', printRoutes);
 // Middleware xử lý lỗi
 app.use((err, req, res, next) => {
   console.error(err.stack);
