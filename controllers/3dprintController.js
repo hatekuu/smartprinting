@@ -57,7 +57,7 @@ const getCommandAndUpdateStatus = async (req, res) => {
       }
     }
 
-    res.status(200).json({ message: responseMessage, command, fileContent });
+    res.status(200).json({ message: responseMessage, command });
   } catch (error) {
     res.status(500).json({ message: 'Lỗi khi lấy lệnh', error: error.message });
   }
