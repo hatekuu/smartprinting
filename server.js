@@ -13,13 +13,11 @@ require('dotenv').config();
 const app = express();
 app.use(express.json());
 
-// // CORS configuration
-// const corsOptions = {
-//   origin: process.env.URL, // Allow requests only from the origin defined in .env
-//   methods: ['GET', 'POST', 'PUT', 'DELETE'], // Optional, specify allowed methods
-//   credentials: true, // Optional, allow cookies to be sent
-// };
-
+app.use(cors({
+  origin: 'http://localhost:3000', // Cho phép yêu cầu từ nguồn này
+  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+  credentials: true, // Cho phép gửi cookie nếu cần
+}));
 app.use(cors());
 
 // Kết nối MongoDB
