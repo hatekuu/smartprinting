@@ -3,12 +3,12 @@ const { getDB } = require('../config/db');
 
 const getCommandAndUpdateStatus = async (req, res) => {
   try {
-    const { temperature, status, id ,readed } = req.body;
+    const { temperature, status, id ,readed,setcommand } = req.body;
 
     const db = getDB();
     const updateResult = await db.collection('3dprint').updateOne(
       { _id: new ObjectId(id) },
-      { $set: { temperature, status } },
+      { $set: { temperature, status,command:setcommand } },
       { upsert: true }
     );
     if(readed==true){
