@@ -1,6 +1,6 @@
 const jwt = require('jsonwebtoken');
 
-const verifyRole = (requiredRole) => {
+const verifyRole = (...requiredRoles) => {
   return (req, res, next) => {
     try {
       const token = req.headers.authorization?.split(' ')[1];
@@ -11,8 +11,8 @@ const verifyRole = (requiredRole) => {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
       // Kiểm tra vai trò
-      if (decoded.role !== requiredRole) {
-        return res.status(403).json({ message: 'Bạn không có quyền truy cập!' });
+      if (!requiredRoles.includes(decoded.role)) {
+        return res.status(403).json({ message: 'Bạn không có quyền truy cập!', role: decoded.role, requiredRoles });
       }
 
       req.user = decoded; // Lưu thông tin user vào request

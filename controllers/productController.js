@@ -19,7 +19,9 @@ const getProducts = async (req, res) => {
       .limit(limitValue) // Giới hạn số sản phẩm
       .toArray();
 
-    res.json({ products, currentPage: pageValue });
+    const totalProducts = await db.collection('products').countDocuments();
+
+    res.json({ products, currentPage: pageValue, totalProducts });
   } catch (error) {
     console.error('Lỗi lấy danh sách sản phẩm:', error.message);
     res.status(500).json({ message: 'Lỗi lấy danh sách sản phẩm' });

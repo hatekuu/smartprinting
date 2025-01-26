@@ -104,18 +104,17 @@ const login = async (req, res) => {
     // Tạo token với vai trò
     const token = jwt.sign(
       {
-        id: user._id,
-        username: user.username,
-        role: user.role, // Thêm vai trò vào payload
+        userId: user._id,
+        role: user.role
       },
       process.env.JWT_SECRET,
       { expiresIn: '1h' }
     );
 
-    res.status(200).json({ message: 'Đăng nhập thành công!', token });
+    // Trả về token, vai trò và ID của người dùng
+    res.status(200).json({ token, role: user.role, userId: user._id });
   } catch (error) {
-    console.error('Lỗi khi đăng nhập:', error.message);
-    res.status(500).json({ message: 'Lỗi máy chủ!' });
+    res.status(500).json({ message: 'Lỗi khi đăng nhập', error: error.message });
   }
 };
 // Đăng xuất người dùng
