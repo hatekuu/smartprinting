@@ -13,14 +13,14 @@ require('dotenv').config();
 const app = express();
 app.use(express.json());
 
-// CORS configuration
-const corsOptions = {
-  origin: process.env.URL, // Allow requests only from the origin defined in .env
-  methods: ['GET', 'POST', 'PUT', 'DELETE'], // Optional, specify allowed methods
-  credentials: true, // Optional, allow cookies to be sent
-};
+// // CORS configuration
+// const corsOptions = {
+//   origin: process.env.URL, // Allow requests only from the origin defined in .env
+//   methods: ['GET', 'POST', 'PUT', 'DELETE'], // Optional, specify allowed methods
+//   credentials: true, // Optional, allow cookies to be sent
+// };
 
-app.use(cors(corsOptions));
+app.use(cors());
 
 // Kết nối MongoDB
 connectDB();
