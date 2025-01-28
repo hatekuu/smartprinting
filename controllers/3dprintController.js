@@ -64,11 +64,19 @@ const getCommandAndUpdateStatus = async (req, res) => {
 };
 const uploadGcodeFile = async (req, res) => {
   try {
-    const { fileName, fileContent, printId, chunkIndex, totalChunks } = req.body;
+    const { fileName, fileContent, printId } = req.body;
     const db = getDB();
 
-    // Tìm tài liệu trong cơ sở dữ liệu có fileName và printId trùng với giá trị trong req.body
-    const existingDoc = await db.collection('gcodefile').findOne({ fileName, printId });
+    // Tìm tất cả các tài liệu có fileName và printId trùng với giá trị trong req.body, sắp xếp theo createdAt để lấy tài liệu mới nhất
+    const documents = await db.collection('gcodefile')
+      .find({ fileName, printId })
+      .sort({ createdAt: -1 })  // Giả sử có trường createdAt để sắp xếp theo thời gian
+      .toArray();
+
+    let existingDoc = null;
+    if (documents.length > 0) {
+      existingDoc = documents[0]; // Lấy tài liệu cuối cùng (mới nhất)
+    }
 
     if (existingDoc) {
       // Kiểm tra kích thước của fileContent đã có trong cơ sở dữ liệu
@@ -81,8 +89,7 @@ const uploadGcodeFile = async (req, res) => {
           fileName,
           fileContent,
           printId,
-          chunkIndex,
-          totalChunks,
+          createdAt: new Date() // Thêm thời gian tạo tài liệu mới
         });
 
         if (result.insertedCount === 0) {
@@ -95,7 +102,7 @@ const uploadGcodeFile = async (req, res) => {
         const updatedContent = existingDoc.fileContent + fileContent;
 
         const result = await db.collection('gcodefile').updateOne(
-          { fileName, printId },
+          { _id: existingDoc._id },  // Dùng _id để chắc chắn cập nhật đúng tài liệu
           { $set: { fileContent: updatedContent } }
         );
 
@@ -111,8 +118,7 @@ const uploadGcodeFile = async (req, res) => {
         fileName,
         fileContent,
         printId,
-        chunkIndex,
-        totalChunks,
+        createdAt: new Date() // Thêm thời gian tạo tài liệu mới
       });
 
       if (result.insertedCount === 0) {
@@ -125,6 +131,7 @@ const uploadGcodeFile = async (req, res) => {
     res.status(500).json({ message: 'Lỗi khi tải lên tệp G-code', error: error.message });
   }
 };
+
 
 const sendCommand = async (req, res) => {
   try {
