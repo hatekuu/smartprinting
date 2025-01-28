@@ -62,19 +62,70 @@ const getCommandAndUpdateStatus = async (req, res) => {
     res.status(500).json({ message: 'Lỗi khi lấy lệnh', error: error.message });
   }
 };
-const uploadGocdeFile = async (req, res) => {
+const uploadGcodeFile = async (req, res) => {
   try {
-    const { fileName, fileContent, printId } = req.body;
+    const { fileName, fileContent, printId, chunkIndex, totalChunks } = req.body;
     const db = getDB();
-    const result = await db.collection('gcodefile').insertOne({ fileName, fileContent, printId });
-    if (result.insertedCount === 0) {
-      return res.status(500).json({ message: 'Lỗi khi thêm file G-code' });
+
+    // Tìm tài liệu trong cơ sở dữ liệu có fileName và printId trùng với giá trị trong req.body
+    const existingDoc = await db.collection('gcodefile').findOne({ fileName, printId });
+
+    if (existingDoc) {
+      // Kiểm tra kích thước của fileContent đã có trong cơ sở dữ liệu
+      const existingContentLength = existingDoc.fileContent ? existingDoc.fileContent.length : 0;
+
+      // Nếu fileContent trong cơ sở dữ liệu có dung lượng > 5MB (5MB = 5 * 1024 * 1024 bytes)
+      if (existingContentLength > 5 * 1024 * 1024) {
+        // Dung lượng quá lớn, không thực hiện update mà chỉ thêm phần mới vào
+        const result = await db.collection('gcodefile').insertOne({
+          fileName,
+          fileContent,
+          printId,
+          chunkIndex,
+          totalChunks,
+        });
+
+        if (result.insertedCount === 0) {
+          return res.status(500).json({ message: 'Lỗi khi thêm phần tệp G-code' });
+        }
+
+        return res.status(200).json({ message: 'Đã tải lên phần tệp, đang chờ các phần còn lại...' });
+      } else {
+        // Dung lượng < 5MB, cập nhật thêm phần fileContent vào trường hiện tại
+        const updatedContent = existingDoc.fileContent + fileContent;
+
+        const result = await db.collection('gcodefile').updateOne(
+          { fileName, printId },
+          { $set: { fileContent: updatedContent } }
+        );
+
+        if (result.modifiedCount === 0) {
+          return res.status(500).json({ message: 'Lỗi khi cập nhật phần tệp G-code' });
+        }
+
+        return res.status(200).json({ message: 'Đã cập nhật phần tệp, đang chờ các phần còn lại...' });
+      }
+    } else {
+      // Nếu không tìm thấy tài liệu trùng với fileName và printId, thực hiện insertOne
+      const result = await db.collection('gcodefile').insertOne({
+        fileName,
+        fileContent,
+        printId,
+        chunkIndex,
+        totalChunks,
+      });
+
+      if (result.insertedCount === 0) {
+        return res.status(500).json({ message: 'Lỗi khi thêm phần tệp G-code' });
+      }
+
+      return res.status(200).json({ message: 'Đã tải lên phần tệp, đang chờ các phần còn lại...' });
     }
-    res.status(200).json({ message: 'Đã thêm file G-code' });
   } catch (error) {
-    res.status(500).json({ message: 'Lỗi khi thêm file G-code', error: error.message });
+    res.status(500).json({ message: 'Lỗi khi tải lên tệp G-code', error: error.message });
   }
-}
+};
+
 const sendCommand = async (req, res) => {
   try {
     const { command,id } = req.body;
@@ -104,4 +155,4 @@ const addPrinter = async (req, res) => {
     res.status(500).json({ message: 'Lỗi khi thêm máy in', error: error.message });
   }
 }
-module.exports = { getCommandAndUpdateStatus,uploadGocdeFile,sendCommand,addPrinter };
+module.exports = { getCommandAndUpdateStatus,uploadGcodeFile,sendCommand,addPrinter };
