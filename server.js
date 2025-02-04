@@ -14,7 +14,7 @@ const app = express();
 app.use(express.json());
 
 app.use(cors({
-  origin: 'http://localhost:3000', // Cho phép yêu cầu từ nguồn này
+  origin: process.env.URL, // Cho phép yêu cầu từ nguồn này
   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
   credentials: true, // Cho phép gửi cookie nếu cần
 }));
