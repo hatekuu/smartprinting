@@ -83,7 +83,7 @@ const uploadGcodeFile = async (req, res) => {
       const existingContentLength = existingDoc.fileContent ? existingDoc.fileContent.length : 0;
 
       // Nếu fileContent trong cơ sở dữ liệu có dung lượng > 5MB (5MB = 5 * 1024 * 1024 bytes)
-      if (existingContentLength > 3 * 1024 * 1024) {
+      if (existingContentLength > 2 * 1024 * 1024) {
         // Dung lượng quá lớn, không thực hiện update mà chỉ thêm phần mới vào
         const result = await db.collection('gcodefile').insertOne({
           fileName,
