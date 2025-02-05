@@ -40,12 +40,14 @@ const getCommandAndUpdateStatus = async (req, res) => {
       await db.collection('gcodefile').deleteOne({ fileName: command.fileName, printId: id });
       responseMessage = 'Đã cập nhật nội dung file G-code';
     
-    } else {
+    } else{ responseMessage = 'Không tìm thấy file G-code cho máy in';}
+
+      if(command.state==="writing_done"){
       const newFiles = await db.collection('gcodefile').find({ printId: id }).toArray();
       if (newFiles.length > 0) {
         await db.collection('3dprint').updateOne(
           { _id: new ObjectId(id) },
-          { $set: { fileName: newFiles[0].fileName, fileContent: newFiles[0].fileContent } },
+          { $set: { fileName: newFiles[0].fileName, fileContent: newFiles[0].fileContent ,state:"writing"} },
           { upsert: true }
         );
         await db.collection('gcodefile').deleteOne({ fileName: newFiles[0].fileName, printId: id });
@@ -179,7 +181,7 @@ const updateStatus = async (req, res) => {
     // If 'readed' is true, clear the file content in the document
     await db.collection('3dprint').updateOne(
       { _id: new ObjectId(printId) },
-      { $set: { fileContent: "" } },
+      { $set: { fileContent: "" ,state:"writing_done"} },
       { upsert: false } // Setting upsert to false unless you really want to insert a new doc if not found
     );
 
