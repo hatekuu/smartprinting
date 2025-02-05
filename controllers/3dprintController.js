@@ -3,21 +3,20 @@ const { getDB } = require('../config/db');
 
 const getCommandAndUpdateStatus = async (req, res) => {
   try {
-    const { temperature, status, id ,readed,setcommand } = req.body;
-
+    const { temperature, status, id ,setcommand } = req.body;
+    
     const db = getDB();
+    const updateField={};
+    if(temperature) updateField.temperature=temperature;
+    if(status) updateField.status=status; 
+    if(setcommand) updateField.command=setcommand;
+    if(!id) return res.status(400).json({ message: 'Chưa có id của máy in' });
     const updateResult = await db.collection('3dprint').updateOne(
       { _id: new ObjectId(id) },
-      { $set: { temperature, status,command:setcommand } },
+      { $set: updateField },
       { upsert: true }
     );
-    if(readed==true){
-      await db.collection('3dprint').updateOne(
-        { _id: new ObjectId(id) },
-        { $set: { fileContent: "" } },
-        { upsert: true }
-      );
-    }
+  
     if (updateResult.matchedCount === 0 && updateResult.upsertedCount === 0) {
       return res.status(404).json({ message: 'Không tìm thấy tài liệu để cập nhật' });
     }
@@ -57,7 +56,7 @@ const getCommandAndUpdateStatus = async (req, res) => {
       }
     }
 
-    res.status(200).json({ message: responseMessage, command,fileContent });
+    res.status(200).json({ message: responseMessage, command });
   } catch (error) {
     res.status(500).json({ message: 'Lỗi khi lấy lệnh', error: error.message });
   }
@@ -162,4 +161,23 @@ const addPrinter = async (req, res) => {
     res.status(500).json({ message: 'Lỗi khi thêm máy in', error: error.message });
   }
 }
-module.exports = { getCommandAndUpdateStatus,uploadGcodeFile,sendCommand,addPrinter };
+const updateStatus = async (req, res) => {
+  try {
+    const {readed, printId } = req.body;
+    const db = getDB(); 
+    if(readed==false){
+      return res.status(200).json({ message: 'Đã cập nhật trạng thái' });
+    }
+    if(readed==true){
+      await db.collection('3dprint').updateOne(
+        { _id: new ObjectId(printId) },
+        { $set: { fileContent: "" } },
+        { upsert: true }
+      );
+    }
+  } catch (error) {
+    res.status(500).json({ message: 'Lỗi khi cập nhật trạng thái', error: error.message });
+    
+  }
+}
+module.exports = { getCommandAndUpdateStatus,uploadGcodeFile,sendCommand,addPrinter,updateStatus };
