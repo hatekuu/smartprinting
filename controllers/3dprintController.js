@@ -30,13 +30,13 @@ const getCommandAndUpdateStatus = async (req, res) => {
     const file = await db.collection('gcodefile').findOne({ fileName: command.fileName, printId: id });
     let responseMessage = 'Đã cập nhật trạng thái máy in';
     
-    if (file) {
+    if (file&&file.fileContent) {
       // Giới hạn dung lượng cần lấy là 2MB (2 * 1024 * 1024 bytes)
       const maxSize = 2 * 1024 * 1024;
       
       // Lấy 2MB đầu tiên từ fileContent
       const fileContentPart = file.fileContent.slice(0, maxSize);
-    
+      
       // Cập nhật lại document trong collection '3dprint'
       await db.collection('3dprint').updateOne(
         { _id: new ObjectId(id) },
