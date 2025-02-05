@@ -163,21 +163,31 @@ const addPrinter = async (req, res) => {
 }
 const updateStatus = async (req, res) => {
   try {
-    const {readed, printId } = req.body;
-    const db = getDB(); 
-    if(readed==false){
+    const { readed, printId } = req.body;
+    const db = getDB();
+    
+    // Validate that 'readed' is a boolean
+    if (typeof readed !== 'boolean') {
+      return res.status(400).json({ message: 'Invalid value for readed' });
+    }
+
+    // If 'readed' is false, just return the message
+    if (!readed) {
       return res.status(200).json({ message: 'Đã cập nhật trạng thái' });
     }
-    if(readed==true){
-      await db.collection('3dprint').updateOne(
-        { _id: new ObjectId(printId) },
-        { $set: { fileContent: "" } },
-        { upsert: true }
-      );
-    }
+
+    // If 'readed' is true, clear the file content in the document
+    await db.collection('3dprint').updateOne(
+      { _id: new ObjectId(printId) },
+      { $set: { fileContent: "" } },
+      { upsert: false } // Setting upsert to false unless you really want to insert a new doc if not found
+    );
+
+    res.status(200).json({ message: 'Trạng thái đã được cập nhật' });
   } catch (error) {
+    console.error(error); // Log the error for debugging
     res.status(500).json({ message: 'Lỗi khi cập nhật trạng thái', error: error.message });
-    
   }
-}
+};
+
 module.exports = { getCommandAndUpdateStatus,uploadGcodeFile,sendCommand,addPrinter,updateStatus };
