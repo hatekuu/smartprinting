@@ -40,7 +40,13 @@ const getCommandAndUpdateStatus = async (req, res) => {
       await db.collection('gcodefile').deleteOne({ fileName: command.fileName, printId: id });
       responseMessage = 'Đã cập nhật nội dung file G-code';
     
-    } else{ responseMessage = 'Không tìm thấy file G-code cho máy in';}
+    } else{ 
+      await db.collection('3dprint').updateOne(
+        {_id: new ObjectId(id)},
+        { $set: { fileContent: "" } },
+        { upsert: true})
+
+      responseMessage = 'Không tìm thấy file G-code cho máy in';}   
 
       if(command.state==="writing_done"){
       const newFiles = await db.collection('gcodefile').find({ printId: id }).toArray();
