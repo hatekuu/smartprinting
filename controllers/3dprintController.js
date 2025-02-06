@@ -28,12 +28,17 @@ const getCommandAndUpdateStatus = async (req, res) => {
     if (!command) {
       return res.status(404).json({ message: 'Không tìm thấy lệnh' });
     }
+    if(command.state=="writing_done"){
+      command.log="Hiện tại chưa có file mới";
+      return res.status(200).json( command);
+    }
     if(command.state=="writing"){
     const maxsize=2*1024*1024;
    const file= await db.collection('gcodefile').findOne({ printId: id,fileName:command.fileName });
    if(!file){
     newfile= await db.collection('gcodefile').findOne({ printId: id });
     if(!newfile){
+      await db.collection('3dprint').updateOne({ _id: new ObjectId(id) }, { $set: { state: "writing_done" } });
       command.log="Không tìm thấy file";
       return res.status(404).json( command );
     }
