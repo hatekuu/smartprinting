@@ -1,6 +1,7 @@
 const { ObjectId } = require('mongodb');
 const { getDB } = require('../config/db');
 const getCommandAndUpdateStatus = async (req, res) => {
+  let command = {}; // Tránh lỗi nếu có lỗi xảy ra trước khi command được gán giá trị
   try {
     const { temperature, status, id, setcommand } = req.body;
     
@@ -24,40 +25,62 @@ const getCommandAndUpdateStatus = async (req, res) => {
       return res.status(404).json({ message: 'Không tìm thấy tài liệu để cập nhật' });
     }
 
-    const command = await db.collection('3dprint').findOne({ _id: new ObjectId(id) });
+    command = await db.collection('3dprint').findOne({ _id: new ObjectId(id) });
     if (!command) {
       return res.status(404).json({ message: 'Không tìm thấy lệnh' });
     }
-    if(command.state=="writing_done"){
-      command.log="Hiện tại chưa có file mới";
-      return res.status(200).json( command);
-    }
-    if(command.state=="writing"){
-    const maxsize=2*1024*1024;
-   const file= await db.collection('gcodefile').findOne({ printId: id,fileName:command.fileName });
-   if(!file){
-    newfile= await db.collection('gcodefile').findOne({ printId: id });
-    if(!newfile){
-      await db.collection('3dprint').updateOne({ _id: new ObjectId(id) }, { $set: { state: "writing_done" } });
-      command.log="Không tìm thấy file";
-      return res.status(404).json( command );
-    }
-    await db.collection('3dprint').updateOne({ _id: new ObjectId(id) }, { $set: { fileName: newfile.fileName } });
-    return res.status(200).json( command );
-   }
-   if(file){
-    const filepart = file.fileContent.slice(0,maxsize);
-   command.fileContent=filepart;
 
-   const newfileContent = file.fileContent.slice(maxsize);
-   if(newfileContent.length>0){
-    await db.collection('gcodefile').updateOne({printId: id,fileName:command.fileName }, { $set: { fileContent: newfileContent } });}
-    else{
-       await db.collection('gcodefile').deleteOne({printId: id ,fileName:command.fileName});}
+    if (command.state === "writing_done") {
+      command.log = "Hiện tại chưa có file mới";
+      return res.status(200).json(command);
     }
-  
-    return res.status(200).json( command );
-  }
+
+    if (command.state === "writing") {
+      let maxsize = 2 * 1024 * 1024;
+      let file = await db.collection('gcodefile').findOne({ printId: id, fileName: command.fileName });
+
+      if (!file) {
+        let newfile = await db.collection('gcodefile').findOne({ printId: id });
+        if (!newfile) {
+          await db.collection('3dprint').updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { state: "writing_done" } }
+          );
+          command.log = "Không tìm thấy file";
+          return res.status(404).json(command);
+        }
+
+        await db.collection('3dprint').updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { fileName: newfile.fileName } }
+        );
+        return res.status(200).json(command);
+      }
+
+      if (file) {
+        let filepart = file.fileContent.slice(0, maxsize);
+      
+        // Kiểm tra nếu ký tự cuối là \r, giảm maxsize xuống 3-4 ký tự
+        if (filepart.endsWith("\r")) {
+          maxsize -= Math.min(4, filepart.length); // Giảm 3-4 ký tự nhưng không vượt quá giới hạn
+          filepart = file.fileContent.slice(0, maxsize);
+        }
+      
+        command.fileContent = filepart;
+      
+        const newfileContent = file.fileContent.slice(maxsize);
+        if (newfileContent.length > 0) {
+          await db.collection('gcodefile').updateOne(
+            { printId: id, fileName: command.fileName },
+            { $set: { fileContent: newfileContent } }
+          );
+        } else {
+          await db.collection('gcodefile').deleteOne({ printId: id, fileName: command.fileName });
+        }
+      }      
+      
+      return res.status(200).json(command);
+    }
   } catch (error) {
     command.error = error.message;
     command.log = 'Lỗi khi lấy lệnh và cập nhật trạng thái';
