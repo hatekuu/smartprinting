@@ -42,7 +42,7 @@ const getCommandAndUpdateStatus = async (req, res) => {
    }
    if(file){
     const filepart = file.fileContent.slice(0,maxsize);
-   command.fileContent2=filepart;
+   command.fileContent=filepart;
 
    const newfileContent = file.fileContent.slice(maxsize);
    if(newfileContent.length>0){
