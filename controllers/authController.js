@@ -112,7 +112,7 @@ const login = async (req, res) => {
     );
 
     // Trả về token, vai trò và ID của người dùng
-    res.status(200).json({ token, role: user.role, userId: user._id });
+    res.status(200).json({ token, role: user.role, userId: user._id,username: user.username });
   } catch (error) {
     res.status(500).json({ message: 'Lỗi khi đăng nhập', error: error.message });
   }
