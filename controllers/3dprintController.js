@@ -28,73 +28,35 @@ const getCommandAndUpdateStatus = async (req, res) => {
     if (!command) {
       return res.status(404).json({ message: 'Không tìm thấy lệnh' });
     }
-    
-    let responseMessage = 'Đã cập nhật trạng thái máy in';
-    
-    if (command.fileName) {
-      const file = await db.collection('gcodefile').findOne({ fileName: command.fileName, printId: id });
-      if (file && file.fileContent) {
-        const maxSize = 2 * 1024 * 1024;
-        const fileContentPart = file.fileContent.slice(0, maxSize);
-        const newFileContent = file.fileContent.length > maxSize ? file.fileContent.slice(maxSize) : "";
-        
-        await db.collection('3dprint').updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { fileContent: fileContentPart } },
-          { upsert: true }
-        );
-        
-        if (newFileContent.length === 0) {
-          await db.collection('gcodefile').deleteOne({ fileName: command.fileName, printId: id });
-          responseMessage = 'Đã cập nhật nội dung file G-code và xóa document';
-        } else {
-          await db.collection('gcodefile').updateOne(
-            { fileName: command.fileName, printId: id },
-            { $set: { fileContent: newFileContent } }
-          );
-          responseMessage = 'Đã cập nhật nội dung file G-code';
-        }
-      } else {
-        await db.collection('3dprint').updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { fileContent: "" } },
-          { upsert: true }
-        );
-        responseMessage = 'Không tìm thấy file G-code cho máy in';
-      }
+    if(command.state=="writing"){
+    const maxsize=2*1024*1024;
+   const file= await db.collection('gcodefile').findOne({ printId: id,fileName:command.fileName });
+   if(!file){
+    newfile= await db.collection('gcodefile').findOne({ printId: id });
+    if(!newfile){
+      command.log="Không tìm thấy file";
+      return res.status(404).json( command );
     }
+    await db.collection('3dprint').updateOne({ _id: new ObjectId(id) }, { $set: { fileName: newfile.fileName } });
+    return res.status(200).json( command );
+   }
+   if(file){
+    const filepart = file.fileContent.slice(0,maxsize);
+   command.fileContent2=filepart;
 
-    if (command.state === "writing_done") {
-      const newFiles = await db.collection('gcodefile').find({ printId: id }).toArray();
-      if (newFiles.length > 0 && newFiles[0].fileContent) {
-        const maxSize = 2 * 1024 * 1024;
-        const fileContentPart = newFiles[0].fileContent.slice(0, maxSize);
-        const newFileContent = newFiles[0].fileContent.length > maxSize ? newFiles[0].fileContent.slice(maxSize) : "";
-        
-        await db.collection('3dprint').updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { fileName: newFiles[0].fileName, fileContent: fileContentPart, state: "writing" } },
-          { upsert: true }
-        );
-        
-        if (newFileContent.length === 0) {
-          await db.collection('gcodefile').deleteOne({ fileName: newFiles[0].fileName, printId: id });
-          responseMessage = 'Đã cập nhật nội dung file G-code mới và xóa document';
-        } else {
-          await db.collection('gcodefile').updateOne(
-            { fileName: newFiles[0].fileName, printId: id },
-            { $set: { fileContent: newFileContent } }
-          );
-          responseMessage = 'Đã cập nhật nội dung file G-code mới';
-        }
-      } else {
-        responseMessage = 'Không tìm thấy file G-code mới cho ID in';
-      }
+   const newfileContent = file.fileContent.slice(maxsize);
+   if(newfileContent.length>0){
+    await db.collection('gcodefile').updateOne({printId: id,fileName:command.fileName }, { $set: { fileContent: newfileContent } });}
+    else{
+       await db.collection('gcodefile').deleteOne({printId: id ,fileName:command.fileName});}
     }
-
-    res.status(200).json({ message: responseMessage, command });
+  
+    return res.status(200).json( command );
+  }
   } catch (error) {
-    res.status(500).json({ message: 'Lỗi khi lấy lệnh', error: error.message });
+    command.error = error.message;
+    command.log = 'Lỗi khi lấy lệnh và cập nhật trạng thái';
+    res.status(500).json(command);
   }
 };
 
