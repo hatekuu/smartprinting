@@ -1,95 +1,92 @@
 const { ObjectId } = require('mongodb');
 const { getDB } = require('../config/db');
-
 const getCommandAndUpdateStatus = async (req, res) => {
   try {
-    const { temperature, status, id ,setcommand } = req.body;
+    const { temperature, status, id, setcommand } = req.body;
+    
+    if (!id || !ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'ID không hợp lệ hoặc thiếu ID' });
+    }
     
     const db = getDB();
-    const updateField={};
-    if(temperature) updateField.temperature=temperature;
-    if(status) updateField.status=status; 
-    if(setcommand) updateField.command=setcommand;
-    if(!id) return res.status(400).json({ message: 'Chưa có id của máy in' });
+    const updateField = {};
+    if (temperature) updateField.temperature = temperature;
+    if (status) updateField.status = status;
+    if (setcommand) updateField.command = setcommand;
+    
     const updateResult = await db.collection('3dprint').updateOne(
       { _id: new ObjectId(id) },
       { $set: updateField },
       { upsert: true }
     );
-  
+
     if (updateResult.matchedCount === 0 && updateResult.upsertedCount === 0) {
       return res.status(404).json({ message: 'Không tìm thấy tài liệu để cập nhật' });
     }
 
     const command = await db.collection('3dprint').findOne({ _id: new ObjectId(id) });
-
     if (!command) {
       return res.status(404).json({ message: 'Không tìm thấy lệnh' });
     }
-
-    const file = await db.collection('gcodefile').findOne({ fileName: command.fileName, printId: id });
+    
     let responseMessage = 'Đã cập nhật trạng thái máy in';
     
-    if (file&&file.fileContent) {
-      // Giới hạn dung lượng cần lấy là 2MB (2 * 1024 * 1024 bytes)
-      const maxSize = 2 * 1024 * 1024;
-      
-      // Lấy 2MB đầu tiên từ fileContent
-      const fileContentPart = file.fileContent.slice(0, maxSize);
-      
-      // Cập nhật lại document trong collection '3dprint'
-      await db.collection('3dprint').updateOne(
-        { _id: new ObjectId(id) },
-        { $set: { fileContent: fileContentPart } },
-        { upsert: true }
-      );
-    
-      // Cập nhật lại trường fileContent trong gcodefile, xóa 2MB đầu tiên
-      const newFileContent = file.fileContent.slice(maxSize); // Cắt bỏ 2MB đầu tiên
-    
-      // Chỉ xóa document khi fileContent còn lại là rỗng
-      if (newFileContent.length === 0) {
-        await db.collection('gcodefile').deleteOne({ fileName: command.fileName, printId: id });
-        responseMessage = 'Đã cập nhật nội dung file G-code và xóa document';
-      } else {
-        await db.collection('gcodefile').updateOne(
-          { fileName: command.fileName, printId: id },
-          { $set: { fileContent: newFileContent } }
-        );
-        responseMessage = 'Đã cập nhật nội dung file G-code';
-      }
-    } else{ 
-      await db.collection('3dprint').updateOne(
-        {_id: new ObjectId(id)},
-        { $set: { fileContent: "" } },
-        { upsert: true})
-
-      responseMessage = 'Không tìm thấy file G-code cho máy in';}   
-
-      if(command.state==="writing_done"){
-      const newFiles = await db.collection('gcodefile').find({ printId: id }).toArray();
-      if (newFiles.length > 0) {
+    if (command.fileName) {
+      const file = await db.collection('gcodefile').findOne({ fileName: command.fileName, printId: id });
+      if (file && file.fileContent) {
         const maxSize = 2 * 1024 * 1024;
-      
-        // Lấy 2MB đầu tiên từ fileContent
-        const fileContentPart = newFiles[0].fileContent.slice(0, maxSize);
+        const fileContentPart = file.fileContent.slice(0, maxSize);
+        const newFileContent = file.fileContent.length > maxSize ? file.fileContent.slice(maxSize) : "";
+        
         await db.collection('3dprint').updateOne(
           { _id: new ObjectId(id) },
-          { $set: { fileName: newFiles[0].fileName, fileContent: fileContentPart ,state:"writing"} },
+          { $set: { fileContent: fileContentPart } },
           { upsert: true }
         );
-        const newFileContent = file.fileContent.slice(maxSize); 
+        
         if (newFileContent.length === 0) {
-          await db.collection('gcodefile').deleteOne({ fileName: newFiles[0].fileName, printId: id });
+          await db.collection('gcodefile').deleteOne({ fileName: command.fileName, printId: id });
           responseMessage = 'Đã cập nhật nội dung file G-code và xóa document';
         } else {
           await db.collection('gcodefile').updateOne(
             { fileName: command.fileName, printId: id },
             { $set: { fileContent: newFileContent } }
-          );}
+          );
+          responseMessage = 'Đã cập nhật nội dung file G-code';
+        }
+      } else {
+        await db.collection('3dprint').updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { fileContent: "" } },
+          { upsert: true }
+        );
+        responseMessage = 'Không tìm thấy file G-code cho máy in';
+      }
+    }
 
-        responseMessage = 'Đã cập nhật nội dung file G-code mới';
-   
+    if (command.state === "writing_done") {
+      const newFiles = await db.collection('gcodefile').find({ printId: id }).toArray();
+      if (newFiles.length > 0 && newFiles[0].fileContent) {
+        const maxSize = 2 * 1024 * 1024;
+        const fileContentPart = newFiles[0].fileContent.slice(0, maxSize);
+        const newFileContent = newFiles[0].fileContent.length > maxSize ? newFiles[0].fileContent.slice(maxSize) : "";
+        
+        await db.collection('3dprint').updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { fileName: newFiles[0].fileName, fileContent: fileContentPart, state: "writing" } },
+          { upsert: true }
+        );
+        
+        if (newFileContent.length === 0) {
+          await db.collection('gcodefile').deleteOne({ fileName: newFiles[0].fileName, printId: id });
+          responseMessage = 'Đã cập nhật nội dung file G-code mới và xóa document';
+        } else {
+          await db.collection('gcodefile').updateOne(
+            { fileName: newFiles[0].fileName, printId: id },
+            { $set: { fileContent: newFileContent } }
+          );
+          responseMessage = 'Đã cập nhật nội dung file G-code mới';
+        }
       } else {
         responseMessage = 'Không tìm thấy file G-code mới cho ID in';
       }
@@ -100,6 +97,7 @@ const getCommandAndUpdateStatus = async (req, res) => {
     res.status(500).json({ message: 'Lỗi khi lấy lệnh', error: error.message });
   }
 };
+
 const uploadGcodeFile = async (req, res) => {
   try {
     const { fileName, fileContent, printId } = req.body;
