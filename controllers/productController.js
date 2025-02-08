@@ -167,7 +167,15 @@ const updateCart = async (req, res) => {
     return res.status(500).json({ message: 'Lỗi cập nhật giỏ hàng', error });
   }
 };
-
+const getDiscount = async (req,res)=>{
+  try {
+    const db = getDB();
+    const discount= await db.collection('discounts').find({}).toArray();
+    return res.status(200).json(discount)
+  } catch (error) {
+    return res.status(500).json({message:"lỗi:",error})
+  }
+}
 // 4️⃣ Tính tổng tiền và áp dụng mã giảm giá
 const applyDiscount = async (req, res) => {
   try {
@@ -184,24 +192,133 @@ const applyDiscount = async (req, res) => {
       return res.status(404).json({ message: 'Giỏ hàng trống' });
     }
 
-    let total = user.cart.products.reduce((sum, item) => sum + (item.price || 0) * item.quantity, 0);
+    // Cập nhật giỏ hàng với mã giảm giá
+    await db.collection('users').updateOne(
+      { _id: new ObjectId(userId) },
+      { $set: { 'cart.code': discountCode } },
+      { upsert: true }
+    );
 
-    // Kiểm tra mã giảm giá
-    const discount = await db.collection('discounts').findOne({ code: discountCode });
-    if (discount) {
-      total -= (total * discount.percent) / 100;
-    }
+    // Thực hiện aggregation
+    const result = await db.collection('users').aggregate([
+      {
+        $match: {
+          _id: new ObjectId(userId)
+        }
+      },
+      {
+        $lookup: {
+          from: 'products',
+          localField: 'cart.products.productId',
+          foreignField: '_id',
+          as: 'productDetails'
+        }
+      },
+      {
+        $lookup: {
+          from: 'discounts',
+          localField: 'cart.code',
+          foreignField: 'code',
+          as: 'discounts'
+        }
+      },
+      {
+        $set: {
+          products: {
+            $map: {
+              input: '$cart.products',
+              as: 'product',
+              in: {
+                $mergeObjects: [
+                  '$$product',
+                  {
+                    price: {
+                      $arrayElemAt: [
+                        {
+                          $map: {
+                            input: {
+                              $filter: {
+                                input: "$productDetails", 
+                                as: "productDetail",
+                                cond: {
+                                  $eq: [
+                                    "$$productDetail._id", 
+                                    "$$product.productId"  
+                                  ]
+                                }
+                              }
+                            },
+                            as: "filteredProduct",
+                            in: "$$filteredProduct.price" 
+                          }
+                        },
+                        0 
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+       {$project: {
+     "products":1,
+    "discounts": { $arrayElemAt: ["$discounts", 0] }
 
-    return res.json({ total });
+   }},
+   
+      {
+        $addFields: {
+          totalAmount: {
+            $sum: {
+              $map: {
+                input: '$products',
+                as: 'product',
+                in: {
+                  $multiply: [
+                    '$$product.quantity',
+                    '$$product.price'
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        $project: {
+          totalAmountWithDiscount: {
+            $subtract:[
+              "$totalAmount",{
+            $multiply: [
+              '$totalAmount',
+              {
+                $divide: [
+                  '$discounts.discountPercentage',
+                  100
+                ]
+              }
+            ]}]
+          }
+        }
+      }
+         
+    ], { maxTimeMS: 60000, allowDiskUse: true }).toArray();
+    
+
+    return res.json(result);
   } catch (error) {
+    console.error(error);
     return res.status(500).json({ message: 'Lỗi áp dụng mã giảm giá', error });
   }
 };
 
+
 // 5️⃣ Xác nhận đơn hàng
 const checkout = async (req, res) => {
   try {
-    const { userId } = req.body;
+    const { userId,address,discount } = req.body;
 
     if (!ObjectId.isValid(userId)) {
       return res.status(400).json({ message: 'Dữ liệu không hợp lệ' });
@@ -218,11 +335,12 @@ const checkout = async (req, res) => {
     const order = {
       userId: new ObjectId(userId),
       products: user.cart.products,
-      total: user.cart.products.reduce((sum, item) => sum + (item.price || 0) * item.quantity, 0),
+      address: Number(address),
       status: 'pending',
       createdAt: new Date(),
+      ...(discount ? { discount: discount } : {}) // Nếu discount có giá trị, thêm vào object
     };
-
+    
     const result = await db.collection('orders').insertOne(order);
     await db.collection('users').updateOne({ _id: new ObjectId(userId) }, { $set: { 'cart.products': [] } });
 
@@ -319,5 +437,5 @@ const cancelOrder = async (req, res) => {
   }
 };
 
-module.exports = {suggestKeyword,findProduct, getProducts, getProductById,addToCart,removeFromCart,updateCart,applyDiscount,checkout,getCart,reviewProduct,requestReturn,cancelOrder};
+module.exports = {getDiscount,suggestKeyword,findProduct, getProducts, getProductById,addToCart,removeFromCart,updateCart,applyDiscount,checkout,getCart,reviewProduct,requestReturn,cancelOrder};
  

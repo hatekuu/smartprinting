@@ -3,7 +3,7 @@ const { verifyRole } = require('../middlewares/roleMiddleware');
 const { 
     getAllUsers,
     getOrders,updateOrderStatus ,getRevenueReport,getTopSellingProducts,getPromotionEffectiveness,
-    updateProduct,addProduct
+    updateProduct,addProduct,addPrinter
     } = require('../controllers/managerController');
 const authMiddleware = require('../middlewares/authMiddleware');
 const router = express.Router();
@@ -17,4 +17,5 @@ router.get('/top-selling-products',authMiddleware, verifyRole('manager'), getTop
 router.get('/promotion-effectiveness',authMiddleware, verifyRole('manager'), getPromotionEffectiveness);
 router.put('/update', authMiddleware, verifyRole('manager'), updateProduct);
 router.post('/', authMiddleware, verifyRole('manager'), addProduct);
+router.post('/addPrinter',authMiddleware, verifyRole('manager'), addPrinter);
 module.exports = router;

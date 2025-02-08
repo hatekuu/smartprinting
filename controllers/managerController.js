@@ -143,5 +143,18 @@ const getPromotionEffectiveness = async (req, res) => {
     res.status(500).json({ message: 'Lỗi lấy hiệu quả quảng cáo/khuyến mãi', error });
   }
 };
+const addPrinter = async (req, res) => {
+  try {
+    const { name, type,filamentColer,size } = req.body;
+    const db = getDB();
+    const result = await db.collection('printer').insertOne({ name, type,filamentColer,size });
+    if (result.insertedCount === 0) {
+      return res.status(500).json({ message: 'Lỗi khi thêm máy in' });
+    }
+    res.status(200).json({ message: 'Đã thêm máy in' });
+  } catch (error) {
+    res.status(500).json({ message: 'Lỗi khi thêm máy in', error: error.message });
+  }
+}
 
-module.exports = { getAllUsers ,getOrders,updateOrderStatus,getRevenueReport,getTopSellingProducts,getPromotionEffectiveness,updateProduct,addProduct};
+module.exports = { getAllUsers ,getOrders,updateOrderStatus,getRevenueReport,getTopSellingProducts,getPromotionEffectiveness,updateProduct,addProduct,addPrinter};

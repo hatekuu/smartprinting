@@ -175,19 +175,7 @@ const sendCommand = async (req, res) => {
     res.status(500).json({ message: 'Lỗi khi gửi lệnh', error: error.message });
   }
 }
-const addPrinter = async (req, res) => {
-  try {
-    const { name, type,filamentColer,size } = req.body;
-    const db = getDB();
-    const result = await db.collection('printer').insertOne({ name, type,filamentColer,size });
-    if (result.insertedCount === 0) {
-      return res.status(500).json({ message: 'Lỗi khi thêm máy in' });
-    }
-    res.status(200).json({ message: 'Đã thêm máy in' });
-  } catch (error) {
-    res.status(500).json({ message: 'Lỗi khi thêm máy in', error: error.message });
-  }
-}
+
 const updateStatus = async (req, res) => {
   try {
     const { readed, printId } = req.body;
@@ -216,5 +204,87 @@ const updateStatus = async (req, res) => {
     res.status(500).json({ message: 'Lỗi khi cập nhật trạng thái', error: error.message });
   }
 };
+const getPrinter = async (req, res) => {
+  try {
+    const db = getDB();
+    const result = await db.collection('3dprint').find().project({ Printer: 1, _id: 1 }).toArray();
+    return res.status(200).json(result);
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+};
+const uploadStlChunk = async (req, res) => {
+  try {
+    const { chunk, chunkIndex, totalChunks, fileId, fileName, printId, userId, quantity } = req.body;
+    const db = getDB();
 
-module.exports = { getCommandAndUpdateStatus,uploadGcodeFile,sendCommand,addPrinter,updateStatus };
+    if (!chunk || !fileId || !fileName || !printId || !userId || chunkIndex === undefined || totalChunks === undefined) {
+      return res.status(400).json({ message: "Dữ liệu không hợp lệ!" });
+    }
+
+    // Tìm document theo fileId và printId
+    let fileDoc = await db.collection("stlFile").findOne({ fileId, printId, userId });
+
+    // Nếu document chưa tồn tại, tạo mới
+    if (!fileDoc) {
+      fileDoc = {
+        fileId,
+        printId,
+        userId,
+        files: [],
+        createdAt: new Date(),
+      };
+      await db.collection("stlFile").insertOne(fileDoc);
+    }
+
+    // Kiểm tra file đã tồn tại trong `files` chưa
+    let fileIndex = fileDoc.files.findIndex((f) => f.fileName === fileName);
+
+    if (fileIndex === -1) {
+      // Nếu file chưa có, thêm mới
+      fileDoc.files.push({
+        fileName,
+        chunks: [],
+        totalChunks,
+        completed: false,
+      });
+      fileIndex = fileDoc.files.length - 1;
+    }
+
+    // Lưu chunk vào file
+    fileDoc.files[fileIndex].chunks.push({ chunkIndex, data: chunk });
+
+    // Cập nhật document trong MongoDB
+    await db.collection("stlFile").updateOne(
+      { fileId, printId, userId },
+      { $set: { files: fileDoc.files } }
+    );
+
+    // Kiểm tra nếu đã nhận đủ chunk
+    if (fileDoc.files[fileIndex].chunks.length === totalChunks) {
+      // Sắp xếp chunk theo `chunkIndex`
+      fileDoc.files[fileIndex].chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
+
+      // Ghép thành base64 hoàn chỉnh
+      const base64Data = fileDoc.files[fileIndex].chunks.map((c) => c.data).join("");
+
+      // Cập nhật nội dung file và xóa chunks
+      fileDoc.files[fileIndex].fileContent = base64Data;
+      fileDoc.files[fileIndex].completed = true;
+      fileDoc.files[fileIndex].quantity = quantity;
+      delete fileDoc.files[fileIndex].chunks;
+
+      await db.collection("stlFile").updateOne(
+        { fileId, printId, userId },
+        { $set: { files: fileDoc.files } }
+      );
+
+      return res.status(200).json({ message: `File ${fileName} uploaded successfully!` });
+    }
+
+    res.status(200).json({ message: `Chunk ${chunkIndex + 1}/${totalChunks} uploaded!` });
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi khi tải lên chunk!", error: error.message });
+  }
+};
+module.exports = { getCommandAndUpdateStatus,uploadGcodeFile,sendCommand,updateStatus ,getPrinter,uploadStlChunk};

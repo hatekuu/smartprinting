@@ -21,7 +21,8 @@ const getUserProfile = async (req, res) => {
       username: user.username,
       userId: user._id,
       role: user.role,
-      // Add other user fields as needed
+      address: user.address || [],
+      number: user.number || '',
     });
   } catch (error) {
     console.error('Error fetching user profile:', error);
@@ -29,4 +30,72 @@ const getUserProfile = async (req, res) => {
   }
 };
 
-module.exports = { getUserProfile };
+const updateProfile = async (req, res) => {
+  try {
+    const { userId, addressIndex, address, phone, note, number } = req.body;
+    const db = getDB();
+    const updateFields = {};
+
+    if (number) updateFields.number = number;
+    
+    if (addressIndex !== undefined) {
+      const addressPath = `address.${addressIndex}`;
+      updateFields[addressPath] = { 
+        address, 
+        phone: phone || '', 
+        note: note || '' 
+      };
+      
+    }
+
+    if (Object.keys(updateFields).length === 0) {
+      return res.status(400).json({ message: "Không có dữ liệu để cập nhật" });
+    }
+
+    await db.collection('users').updateOne(
+      { _id: new ObjectId(userId) },
+      { $set: updateFields }
+    );
+    
+    return res.status(200).json({ message: "Cập nhật thành công" });
+  } catch (error) {
+    console.error("Error updating profile:", error);
+    return res.status(500).json({ message: "Lỗi server" });
+  }
+};
+const deleteAddress = async (req, res) => {
+  try {
+    const { userId, addressIndex } = req.body;
+
+    if (!userId || addressIndex === undefined) {
+      return res.status(400).json({ message: "Thiếu userId hoặc addressIndex" });
+    }
+
+    const db = getDB();
+    const objectId = new ObjectId(userId);
+
+    // Bước 1: Xóa địa chỉ bằng $unset
+    const unsetResult = await db.collection('users').updateOne(
+      { _id: objectId },
+      { $unset: { [`address.${addressIndex}`]: "" } }
+    );
+
+    if (unsetResult.modifiedCount === 0) {
+      return res.status(404).json({ message: "Không tìm thấy người dùng hoặc địa chỉ" });
+    }
+
+    // Bước 2: Dùng $pull để xóa giá trị null
+    await db.collection('users').updateOne(
+      { _id: objectId },
+      { $pull: { address: null } }
+    );
+
+    return res.status(200).json({ message: "Đã xóa địa chỉ thành công" });
+  } catch (error) {
+    console.error("Lỗi khi xóa địa chỉ:", error);
+    return res.status(500).json({ message: "Lỗi server" });
+  }
+};
+
+
+module.exports = { getUserProfile, updateProfile, deleteAddress };
