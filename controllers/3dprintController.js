@@ -373,6 +373,9 @@ const getPrinter = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
+const readline = require("readline");
+
+// Hàm xác thực Google Drive
 const authenticateGoogleDrive = () => {
   const auth = new google.auth.GoogleAuth({
     credentials: {
@@ -392,6 +395,7 @@ const authenticateGoogleDrive = () => {
   return google.drive({ version: "v3", auth });
 };
 
+// Hàm upload tệp lớn lên Google Drive sử dụng resumable upload
 const uploadToGoogleDrive = async (filePath, fileName) => {
   try {
     const drive = authenticateGoogleDrive();
@@ -401,12 +405,14 @@ const uploadToGoogleDrive = async (filePath, fileName) => {
       parents: [process.env.PARENT_ID], // ID thư mục Drive
     };
 
+    // Tạo một upload session với kiểu resumable
     const res = await drive.files.create({
       requestBody: fileMetadata,
       media: {
         mimeType: "application/octet-stream",
-        body: fs.createReadStream(filePath),
+        body: fs.createReadStream(filePath), // Đọc tệp từ server (hoặc từ client nếu chuyển trực tiếp)
       },
+      uploadType: 'resumable', // Thiết lập kiểu upload là resumable
       fields: "id, webViewLink, webContentLink",
     });
 
@@ -487,84 +493,4 @@ const uploadFile = async (req, res) => {
   }
 };
 
-
-// Hàm lưu chunk STL
-const uploadStlChunk = async (req, res) => {
-  try {
-    const { chunk, chunkIndex, totalChunks, fileId, fileName, printId, userId, quantity } = req.body;
-    const db = getDB();
-
-    if (!chunk || !fileId || !fileName || !printId || !userId || chunkIndex === undefined || totalChunks === undefined) {
-      return res.status(400).json({ message: "Dữ liệu không hợp lệ!" });
-    }
-
-    let fileDoc = await db.collection("stlFile").findOne({ fileId, printId, userId });
-
-    if (!fileDoc) {
-      fileDoc = {
-        fileId,
-        printId,
-        userId,
-        files: [],
-        createdAt: new Date(),
-      };
-      await db.collection("stlFile").insertOne(fileDoc);
-    }
-
-    let fileIndex = fileDoc.files.findIndex((f) => f.fileName === fileName);
-
-    if (fileIndex === -1) {
-      fileDoc.files.push({
-        fileName,
-        chunks: [],
-        totalChunks,
-        completed: false,
-      });
-      fileIndex = fileDoc.files.length - 1;
-    }
-
-    fileDoc.files[fileIndex].chunks.push({ chunkIndex, data: chunk });
-
-    await db.collection("stlFile").updateOne(
-      { fileId, printId, userId },
-      { $set: { files: fileDoc.files } }
-    );
-
-    if (fileDoc.files[fileIndex].chunks.length === totalChunks) {
-      fileDoc.files[fileIndex].chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
-      const base64Data = fileDoc.files[fileIndex].chunks.map((c) => c.data).join("");
-
-      // Chuyển Base64 thành file
-      const buffer = Buffer.from(base64Data, "base64");
-      const fileBaseName = path.basename(fileName, path.extname(fileName));
-    
-      const tempFilePath = path.join(__dirname, `${fileBaseName}-${fileId}.stl`);
-      fs.writeFileSync(tempFilePath, buffer);
-
-      // Upload lên Google Drive
-      const uploadResult = await uploadToGoogleDrive(tempFilePath, `${fileBaseName}_${fileId}.stl`);
-
-      // Xóa file tạm
-      fs.unlinkSync(tempFilePath);
-
-      // Lưu link Google Drive vào MongoDB
-      fileDoc.files[fileIndex].fileContent = uploadResult.webViewLink;
-      fileDoc.files[fileIndex].completed = true;
-      fileDoc.files[fileIndex].quantity = quantity;
-      delete fileDoc.files[fileIndex].chunks;
-
-      await db.collection("stlFile").updateOne(
-        { fileId, printId, userId },
-        { $set: { files: fileDoc.files, status: "waiting" } }
-      );
-
-      return res.status(200).json({ message: `File ${fileName} uploaded to Google Drive!`, link: uploadResult.webViewLink });
-    }
-
-    res.status(200).json({ message: `Chunk ${chunkIndex + 1}/${totalChunks} uploaded!` });
-  } catch (error) {
-    res.status(500).json({ message: "Lỗi khi tải lên chunk!", error: error.message });
-  }
-};
-
-module.exports = {uploadFile, getCommandAndUpdateStatus,uploadGcodeFile,sendCommand,updateStatus ,getPrinter,uploadStlChunk,confirmOrder,processGcodePricing,downloadStl,confirmDownload};
+module.exports = {uploadFile, getCommandAndUpdateStatus,uploadGcodeFile,sendCommand,updateStatus ,getPrinter,confirmOrder,processGcodePricing,downloadStl,confirmDownload};
