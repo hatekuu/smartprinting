@@ -1,5 +1,8 @@
-const { ObjectId } = require('mongodb');
+const { ObjectId,GridFSBucket  } = require('mongodb');
+const { Readable } = require('stream');
+
 const { getDB } = require('../config/db');
+
 const getCommandAndUpdateStatus = async (req, res) => {
   let command = {}; // Tránh lỗi nếu có lỗi xảy ra trước khi command được gán giá trị
   try {
@@ -90,9 +93,16 @@ const getCommandAndUpdateStatus = async (req, res) => {
 
 const uploadGcodeFile = async (req, res) => {
   try {
-    const { fileName, fileContent, printId } = req.body;
+    const { fileName, fileContent,process } = req.body;
     const db = getDB();
-
+    const fileData = await db.collection('stlFile').findOne({ status: { $eq: 'download_confirmed' }})
+    if (!fileData) {
+      return res.status(404).json({ message: 'Không tìm thấy file STL đã được xác nhận tải xuống' });
+    }    
+    const {fileId,userId,printId}=fileData
+    if(process=='done'){
+      await db.collection('stlFile').deleteOne({fileId:fileId})
+    }
     // Tìm tất cả các tài liệu có fileName và printId trùng với giá trị trong req.body, sắp xếp theo createdAt để lấy tài liệu mới nhất
     const documents = await db.collection('gcodefile')
       .find({ fileName, printId })
@@ -115,6 +125,9 @@ const uploadGcodeFile = async (req, res) => {
           fileName,
           fileContent,
           printId,
+          fileId,
+          userId,
+          status:"pending",
           createdAt: new Date() // Thêm thời gian tạo tài liệu mới
         });
 
@@ -144,6 +157,8 @@ const uploadGcodeFile = async (req, res) => {
         fileName,
         fileContent,
         printId,
+        fileId,
+        userId,
         createdAt: new Date() // Thêm thời gian tạo tài liệu mới
       });
 
@@ -157,8 +172,126 @@ const uploadGcodeFile = async (req, res) => {
     res.status(500).json({ message: 'Lỗi khi tải lên tệp G-code', error: error.message });
   }
 };
+const processGcodePricing = async (req, res) => {
+  try {
+    const {  userId } = req.body;
+    const db = getDB();
+
+    // Lấy tất cả file G-code thỏa mãn điều kiện
+    const gcodeFiles = await db.collection("gcodefile").find({  userId, status:{$eq:"pending"},confirmed:{$ne:'yes'} }).toArray();
+
+    if (gcodeFiles.length === 0) {
+      return res.status(404).json({ message: "Không tìm thấy file G-code!" });
+    }
+
+    // Duyệt qua từng file, lọc các file hợp lệ và tính tiền
+    const pricingResults = gcodeFiles
+      .map(gcodeFile => {
+        const gcodeContent = gcodeFile.fileContent;
+        const fileName = gcodeFile.fileName;
+        const fileId=gcodeFile.fileId
+        const printId=gcodeFile.printId
+        // Tìm thời gian in và lượng filament sử dụng
+        const timeMatch = gcodeContent.match(/;TIME:(\d+)/);
+        const filamentMatch = gcodeContent.match(/;Filament used:\s*(\d+\.?\d*)m/);
+
+        // Nếu không có thông tin cần thiết, bỏ qua file này
+        if (!timeMatch || !filamentMatch) return null;
+
+        const printTime = parseInt(timeMatch[1]); // Thời gian in (giây)
+        const filamentUsed = parseFloat(filamentMatch[1]); // Lượng filament (mét)
+
+        // Giá theo thời gian và vật liệu (ví dụ: 50 đồng/phút, 200 đồng/mét filament)
+        const pricePerMinute = 50;
+        const pricePerMeter = 200;
+        const totalPrice = (printTime / 60) * pricePerMinute + filamentUsed * pricePerMeter;
+
+        return {
+          printId,
+          fileId,
+          fileName,
+          price: totalPrice,
+          printTime,
+          filamentUsed
+        };
+      })
+      .filter(result => result !== null); // Loại bỏ các phần tử null
+
+    if (pricingResults.length === 0) {
+      return res.status(400).json({ message: "Không thể đọc thông số từ bất kỳ file G-code nào!" });
+    }
+
+    return res.status(200).json({
+      message: "Tính giá thành công!",
+      pricing: pricingResults
+    });
+
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi khi xử lý giá!", error: error.message });
+  }
+};
+
+const confirmOrder = async (req, res) => {
+  try {
+    const { fileId, printId, userId, confirm ,price,fileName} = req.body;
+    const db = getDB();
+  
+    if (confirm) {
+      // Nếu user đồng ý, tạo đơn hàng
+      const order = {
+        userId:new ObjectId(userId),
+        printId,
+        fileId,
+        price,
+        fileName,
+        status: "pending", // Đơn hàng đang chờ xử lý
+        createdAt: new Date()
+      };
+      await db.collection("orders").insertOne(order);
+      await db.collection("gcodefile").updateOne({ fileId, printId }, { $set: { confirmed: "yes" } },{upsert:true});
+      return res.status(200).json({ message: "Đơn hàng đã được tạo!" });
+    } else {
+      // Nếu user từ chối, xóa dữ liệu liên quan
+      await db.collection("stlFile").deleteMany({ fileId, printId, userId });
+      await db.collection("gcodefile").deleteMany({ fileId, printId });
+      return res.status(200).json({ message: "Dữ liệu đã được xóa!" });
+    }
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi khi xử lý xác nhận đơn hàng!", error: error.message });
+  }
+};
+const downloadStl = async(req,res)=>{
+  try {
+    const db=getDB()
+    const fileData= await db.collection('stlFile').findOne({ status: { $eq: 'waiting'  }});
+    if (!fileData) {
+      return res.status(200).json({ message: 'No available STL file for download' });
+  }
+ 
+res.json( fileData );
+  } catch (error) {
+    res.status(500).json({ message: 'Error downloading STL file', error });
+  }
+}
+const confirmDonwload= async(req,res)=>{
+  try {
+    const db=getDB()
+    const { fileId } = req.body;
 
 
+    if (!fileId) {
+      return res.status(400).json({ message: 'fileId is required' });
+  }
+   // Cập nhật trạng thái thành "download_confirmed"
+      const result = await db.collection("stlFile").updateOne(
+        { _id: new ObjectId(fileId), status: "downloading" },
+        { $set: { status: "download_confirmed" } }
+      );
+    res.json({ message: 'Download confirmed' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error confirming download', error });
+  }
+}
 const sendCommand = async (req, res) => {
   try {
     const { command,id } = req.body;
@@ -245,6 +378,7 @@ const uploadStlChunk = async (req, res) => {
       fileDoc.files.push({
         fileName,
         chunks: [],
+        status:'waiting',
         totalChunks,
         completed: false,
       });
@@ -287,4 +421,35 @@ const uploadStlChunk = async (req, res) => {
     res.status(500).json({ message: "Lỗi khi tải lên chunk!", error: error.message });
   }
 };
-module.exports = { getCommandAndUpdateStatus,uploadGcodeFile,sendCommand,updateStatus ,getPrinter,uploadStlChunk};
+const uploadFile = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Không có file nào được tải lên' });
+    }
+
+    const db = getDB(); // Lấy MongoDB từ app
+    const bucket = new GridFSBucket(db, { bucketName: 'files' });
+
+    // Chuyển file Buffer thành stream
+    const readableStream = new Readable();
+    readableStream.push(req.file.buffer);
+    readableStream.push(null);
+
+    const uploadStream = bucket.openUploadStream(req.file.originalname);
+    readableStream.pipe(uploadStream);
+
+    uploadStream.on('finish', () => {
+      res.json({ message: 'Upload thành công!', fileName: req.file.originalname });
+    });
+
+    uploadStream.on('error', (err) => {
+      console.error('Lỗi khi lưu file:', err);
+      res.status(500).json({ error: 'Lỗi khi upload file' });
+    });
+
+  } catch (error) {
+    console.error('Lỗi server:', error);
+    res.status(500).json({ error: 'Lỗi server' });
+  }
+};
+module.exports = { getCommandAndUpdateStatus,uploadGcodeFile,sendCommand,updateStatus ,getPrinter,uploadStlChunk,confirmOrder,processGcodePricing,downloadStl,confirmDonwload,uploadFile};

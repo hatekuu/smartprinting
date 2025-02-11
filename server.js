@@ -11,14 +11,20 @@ const cors = require('cors');
 require('dotenv').config();
 
 const app = express();
-app.use(express.json());
 
+// Kiểm tra nếu process.env.URL tồn tại
+const allowedOrigins = process.env.URL ? [process.env.URL] : '*';
+
+// Cấu hình CORS
 app.use(cors({
-  origin: process.env.URL, // Cho phép yêu cầu từ nguồn này
+  origin: allowedOrigins, 
   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-  credentials: true, // Cho phép gửi cookie nếu cần
+  credentials: true, 
 }));
-app.use(cors());
+
+// Giới hạn dung lượng request body
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Kết nối MongoDB
 connectDB();
@@ -39,10 +45,12 @@ app.use('/api/manager', managerRoutes);
 app.use('/api/product', productRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/3dprint', printRoutes);
+
 // Middleware xử lý lỗi
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({ message: 'Có lỗi xảy ra!' });
+  next(); // Đảm bảo request không bị treo
 });
 
 // Khởi động server

@@ -80,7 +80,7 @@ const suggestKeyword = async (req, res) => {
     return res.status(500).json({ message: 'Lỗi gợi ý từ khóa', error });
   }
 };
-// 1️⃣ Thêm sản phẩm vào giỏ hàng
+// Thêm sản phẩm vào giỏ hàng
 const addToCart = async (req, res) => {
   try {
     const { productId, quantity, userId } = req.body;
@@ -104,6 +104,9 @@ const addToCart = async (req, res) => {
     }
 
     // Cập nhật giỏ hàng
+    if(product.stock<quantity){
+      return res.status(403).json({message:'Sản phẩm đã hết hoặc số lượng ko đủ'})
+    }
     await db.collection('users').updateOne(
       { _id: new ObjectId(userId), 'cart.products.productId': new ObjectId(productId) },
       { $inc: { 'cart.products.$.quantity': quantity } }
@@ -124,7 +127,7 @@ const addToCart = async (req, res) => {
     return res.status(500).json({ message: 'Lỗi thêm vào giỏ hàng', error });
   }
 };
-// 2️⃣ Xóa sản phẩm khỏi giỏ hàng
+// Xóa sản phẩm khỏi giỏ hàng
 const removeFromCart = async (req, res) => {
   try {
     const { productId, userId } = req.body;
@@ -146,27 +149,62 @@ const removeFromCart = async (req, res) => {
   }
 };
 
-// 3️⃣ Cập nhật số lượng sản phẩm
+// Cập nhật số lượng sản phẩm
 const updateCart = async (req, res) => {
   try {
     const { productId, quantity, userId } = req.body;
 
+    // Kiểm tra dữ liệu đầu vào hợp lệ
     if (!ObjectId.isValid(userId) || !ObjectId.isValid(productId) || !Number.isInteger(quantity) || quantity <= 0) {
       return res.status(400).json({ message: 'Dữ liệu không hợp lệ' });
     }
 
     const db = getDB();
 
-    await db.collection('users').updateOne(
-      { _id: new ObjectId(userId), 'cart.products.productId': new ObjectId(productId) },
-      { $set: { 'cart.products.$.quantity': quantity } }
-    );
+    // Lấy thông tin sản phẩm
+    const product = await db.collection('products').findOne({ _id: new ObjectId(productId) });
+    if (!product) {
+      return res.status(404).json({ message: 'Sản phẩm không tồn tại' });
+    }
+
+    // Lấy thông tin giỏ hàng của người dùng
+    const user = await db.collection('users').findOne({ _id: new ObjectId(userId) });
+    if (!user) {
+      return res.status(404).json({ message: 'Người dùng không tồn tại' });
+    }
+
+    // Tìm sản phẩm trong giỏ hàng của user
+    const cartProduct = user.cart?.products.find((p) => p.productId.equals(new ObjectId(productId)));
+
+    if (cartProduct) {
+      // Kiểm tra số lượng tồn kho
+      if (product.stock < quantity) {
+        return res.status(400).json({ message: 'Sản phẩm không đủ hàng trong kho' });
+      }
+
+      // Cập nhật số lượng sản phẩm trong giỏ hàng
+      await db.collection('users').updateOne(
+        { _id: new ObjectId(userId), 'cart.products.productId': new ObjectId(productId) },
+        { $set: { 'cart.products.$.quantity': quantity } }
+      );
+    } else {
+      // Nếu sản phẩm chưa có trong giỏ hàng, thêm vào
+      if (product.stock < quantity) {
+        return res.status(400).json({ message: 'Sản phẩm không đủ hàng trong kho' });
+      }
+
+      await db.collection('users').updateOne(
+        { _id: new ObjectId(userId) },
+        { $push: { 'cart.products': { productId: new ObjectId(productId), quantity } } }
+      );
+    }
 
     return res.json({ message: 'Cập nhật giỏ hàng thành công' });
   } catch (error) {
-    return res.status(500).json({ message: 'Lỗi cập nhật giỏ hàng', error });
+    return res.status(500).json({ message: 'Lỗi cập nhật giỏ hàng', error: error.message });
   }
 };
+
 const getDiscount = async (req,res)=>{
   try {
     const db = getDB();
@@ -176,7 +214,7 @@ const getDiscount = async (req,res)=>{
     return res.status(500).json({message:"lỗi:",error})
   }
 }
-// 4️⃣ Tính tổng tiền và áp dụng mã giảm giá
+// Tính tổng tiền và áp dụng mã giảm giá
 const applyDiscount = async (req, res) => {
   try {
     const { discountCode, userId } = req.body;
@@ -315,11 +353,11 @@ const applyDiscount = async (req, res) => {
 };
 
 
-// 5️⃣ Xác nhận đơn hàng
+// Xác nhận đơn hàng
 const checkout = async (req, res) => {
   try {
     const { userId,address,discount } = req.body;
-
+    
     if (!ObjectId.isValid(userId)) {
       return res.status(400).json({ message: 'Dữ liệu không hợp lệ' });
     }
@@ -349,7 +387,8 @@ const checkout = async (req, res) => {
     return res.status(500).json({ message: 'Lỗi xác nhận đơn hàng', error });
   }
 };
-// 6️⃣ Lấy danh sách sản phẩm trong giỏ hàng
+
+//  Lấy danh sách sản phẩm trong giỏ hàng
 const getCart = async (req, res) => {
   try {
     const { userId } = req.body;
@@ -388,9 +427,109 @@ const getCart = async (req, res) => {
     return res.status(500).json({ message: 'Lỗi lấy giỏ hàng', error });
   }
 };
+const getUserOrders = async (req, res) => {
+  try {
+    const { userId } = req.body;
+
+    if (!ObjectId.isValid(userId)) {
+      return res.status(400).json({ message: "Dữ liệu không hợp lệ" });
+    }
+
+    const db = getDB();
+
+    const statusPriority = {
+      pending: 1,
+      processing: 2,
+      shipped: 3,
+      completed: 4,
+      cancelled: 5,
+    };
+
+    const orders = await db.collection("orders")
+      .aggregate([
+        { $match: { userId: new ObjectId(userId) } }, // Lọc theo userId
+        
+        // Thêm field statusPriority để sắp xếp theo trạng thái đơn hàng
+        { 
+          $addFields: { 
+            statusPriority: {
+              $switch: {
+                branches: [
+                  { case: { $eq: ["$status", "pending"] }, then: 1 },
+                  { case: { $eq: ["$status", "processing"] }, then: 2 },
+                  { case: { $eq: ["$status", "shipped"] }, then: 3 },
+                  { case: { $eq: ["$status", "completed"] }, then: 4 },
+                  { case: { $eq: ["$status", "cancelled"] }, then: 5 },
+                ],
+                default: 99
+              }
+            }
+          }
+        },
+
+        // Lookup để lấy thông tin chi tiết sản phẩm từ collection products
+        {
+          $lookup: {
+            from: "products", // Collection chứa thông tin sản phẩm
+            localField: "products.productId", // Field trong orders
+            foreignField: "_id", // Field tương ứng trong products
+            as: "productDetails"
+          }
+        },
+
+        // Thay đổi cấu trúc products để gộp thông tin từ productDetails
+        {
+          $addFields: {
+            products: {
+              $map: {
+                input: "$products",
+                as: "prod",
+                in: {
+                  $mergeObjects: [
+                    "$$prod",
+                    { 
+                      $arrayElemAt: [
+                        {
+                          $filter: {
+                            input: "$productDetails",
+                            as: "details",
+                            cond: { $eq: ["$$details._id", "$$prod.productId"] }
+                          }
+                        }, 
+                        0
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+
+        // Xóa field productDetails vì nó đã được gộp vào products
+        { $unset: "productDetails" },
+
+        // Sắp xếp theo trạng thái đơn hàng và thời gian tạo
+        { $sort: { statusPriority: 1, createdAt: -1 } },
+
+        // Ẩn statusPriority
+        { $project: { statusPriority: 0 } }
+      ])
+      .toArray();
+
+    if (orders.length === 0) {
+      return res.status(404).json({ message: "Không tìm thấy đơn hàng nào" });
+    }
+
+    return res.json(orders);
+  } catch (error) {
+    return res.status(500).json({ message: "Lỗi lấy danh sách đơn hàng", error });
+  }
+};
 
 
-// 5️⃣ Đánh giá sản phẩm
+
+//  Đánh giá sản phẩm
 const reviewProduct = async (req, res) => {
   try {
     const { userId, productId, rating, comment } = req.body;
@@ -404,7 +543,7 @@ const reviewProduct = async (req, res) => {
     return res.status(500).json({ message: 'Lỗi đánh giá sản phẩm', error });
   }
 };
-// 4️⃣ Yêu cầu đổi/trả hàng
+//  Yêu cầu đổi/trả hàng
 const requestReturn = async (req, res) => {
   try {
     const { orderId, reason } = req.body;
@@ -418,24 +557,60 @@ const requestReturn = async (req, res) => {
     return res.status(500).json({ message: 'Lỗi yêu cầu đổi/trả', error });
   }
 };
-// 3️⃣ Hủy đơn hàng
+// Hủy đơn hàng
 const cancelOrder = async (req, res) => {
   try {
-    const { orderId } = req.body;
-    if (!ObjectId.isValid(orderId)) {
-      return res.status(400).json({ message: 'Dữ liệu không hợp lệ' });
-    }
+    const { userId, orderId } = req.body;
     const db = getDB();
-    const order = await db.collection('orders').findOne({ _id: new ObjectId(orderId) });
-    if (!order || order.status !== 'chờ xử lý') {
-      return res.status(400).json({ message: 'Không thể hủy đơn hàng này' });
+
+    const order = await db.collection("orders").findOne({ _id: new ObjectId(orderId), userId: new ObjectId(userId) });
+
+    if (!order) {
+      return res.status(404).json({ message: "Không tìm thấy đơn hàng" });
     }
-    await db.collection('orders').deleteOne({ _id: new ObjectId(orderId) });
-    return res.json({ message: 'Đơn hàng đã bị hủy' });
+
+    if (order.status !== "pending") {
+      return res.status(400).json({ message: "Không thể hủy đơn hàng này" });
+    }
+
+    await db.collection("orders").updateOne(
+      { _id: new ObjectId(orderId) },
+      { $set: { status: "cancelled" } }
+    );
+
+    return res.json({ message: "Đơn hàng đã bị hủy" });
   } catch (error) {
-    return res.status(500).json({ message: 'Lỗi hủy đơn hàng', error });
+    return res.status(500).json({ message: "Lỗi hủy đơn hàng", error });
   }
 };
+const confirmReceived = async (req, res) => {
+  try {
+    const { userId, orderId } = req.body;
+    const db = getDB();
 
-module.exports = {getDiscount,suggestKeyword,findProduct, getProducts, getProductById,addToCart,removeFromCart,updateCart,applyDiscount,checkout,getCart,reviewProduct,requestReturn,cancelOrder};
+    const order = await db.collection("orders").findOne({ _id: new ObjectId(orderId), userId: new ObjectId(userId) });
+
+    if (!order) {
+      return res.status(404).json({ message: "Không tìm thấy đơn hàng" });
+    }
+
+    if (order.status !== "shipped") {
+      return res.status(400).json({ message: "Chỉ có thể xác nhận đơn hàng đã giao" });
+    }
+
+    await db.collection("orders").updateOne(
+      { _id: new ObjectId(orderId) },
+      { $set: { status: "completed" } }
+    );
+
+    return res.json({ message: "Đã xác nhận đơn hàng đã giao thành công" });
+  } catch (error) {
+    return res.status(500).json({ message: "Lỗi xác nhận đơn hàng", error });
+  }
+};
+module.exports = {
+  getDiscount,suggestKeyword,findProduct, getProducts, getProductById,
+  addToCart,removeFromCart,updateCart,applyDiscount,checkout,getCart,
+  reviewProduct,requestReturn,cancelOrder,confirmReceived,getUserOrders
+};
  
