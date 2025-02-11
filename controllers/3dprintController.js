@@ -1,8 +1,6 @@
 const { ObjectId  } = require('mongodb');
-
 const { google } = require("googleapis");
 const fs = require("fs");
-const path = require("path");
 const { getDB } = require('../config/db');
 require('dotenv').config();
 
@@ -373,9 +371,8 @@ const getPrinter = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
-const readline = require("readline");
 
-// Hàm xác thực Google Drive
+
 const authenticateGoogleDrive = () => {
   const auth = new google.auth.GoogleAuth({
     credentials: {
@@ -395,7 +392,6 @@ const authenticateGoogleDrive = () => {
   return google.drive({ version: "v3", auth });
 };
 
-// Hàm upload tệp lớn lên Google Drive sử dụng resumable upload
 const uploadToGoogleDrive = async (filePath, fileName) => {
   try {
     const drive = authenticateGoogleDrive();
@@ -405,14 +401,12 @@ const uploadToGoogleDrive = async (filePath, fileName) => {
       parents: [process.env.PARENT_ID], // ID thư mục Drive
     };
 
-    // Tạo một upload session với kiểu resumable
     const res = await drive.files.create({
       requestBody: fileMetadata,
       media: {
         mimeType: "application/octet-stream",
-        body: fs.createReadStream(filePath), // Đọc tệp từ server (hoặc từ client nếu chuyển trực tiếp)
+        body: fs.createReadStream(filePath),
       },
-      uploadType: 'resumable', // Thiết lập kiểu upload là resumable
       fields: "id, webViewLink, webContentLink",
     });
 
@@ -424,7 +418,8 @@ const uploadToGoogleDrive = async (filePath, fileName) => {
   }
 };
 
-// Controller xử lý API upload file
+
+
 const uploadFile = async (req, res) => {
   const { fileId, printId, userId, quantity } = req.body;
   const db = getDB(); // Kết nối MongoDB
@@ -492,5 +487,7 @@ const uploadFile = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+
+
 
 module.exports = {uploadFile, getCommandAndUpdateStatus,uploadGcodeFile,sendCommand,updateStatus ,getPrinter,confirmOrder,processGcodePricing,downloadStl,confirmDownload};

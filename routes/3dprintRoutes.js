@@ -5,11 +5,6 @@ const multer = require("multer");
 const router = express.Router();
 
 
-const upload = multer({
-    dest: "/tmp/uploads/",
-    limits: { fileSize: 50 * 1024 * 1024 }, // Giới hạn tệp tải lên tối đa là 50MB
-  })
-  
 router.post('/getCommand', getCommandAndUpdateStatus);
 router.post('/uploadFile', uploadGcodeFile);
 router.post('/sendCommand', sendCommand);
@@ -20,6 +15,9 @@ router.post('/confirm-order', confirmOrder);
 router.post('/gcodepricing', processGcodePricing);
 router.post('/download-stl', downloadStl);
 router.post('/confirm-download', confirmDownload);
-router.post("/upload", upload.single("file"), uploadFile);
+const upload = multer({ dest: "/tmp/" });
+
+// Endpoint upload file
+router.post('/uploadFile', upload.single('file'), uploadFile);
 
 module.exports = router;
