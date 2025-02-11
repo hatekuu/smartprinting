@@ -1,7 +1,10 @@
-const { ObjectId,GridFSBucket  } = require('mongodb');
-const { Readable } = require('stream');
+const { ObjectId  } = require('mongodb');
 
+const { google } = require("googleapis");
+const fs = require("fs");
+const path = require("path");
 const { getDB } = require('../config/db');
+require('dotenv').config();
 
 const getCommandAndUpdateStatus = async (req, res) => {
   let command = {}; // Tránh lỗi nếu có lỗi xảy ra trước khi command được gán giá trị
@@ -273,25 +276,49 @@ res.json( fileData );
     res.status(500).json({ message: 'Error downloading STL file', error });
   }
 }
-const confirmDonwload= async(req,res)=>{
+const deleteFileFromGoogleDrive = async (driveFileId) => {
   try {
-    const db=getDB()
-    const { fileId } = req.body;
-
+    const drive = authenticateGoogleDrive();
+    await drive.files.delete({ fileId: driveFileId });
+    console.log(`File ${driveFileId} deleted from Google Drive`);
+  } catch (error) {
+    console.error("Error deleting file from Google Drive:", error.message);
+  }
+};
+const confirmDownload = async (req, res) => {
+  try {
+    const db = getDB();
+    const { fileId,googleFileId } = req.body;
 
     if (!fileId) {
-      return res.status(400).json({ message: 'fileId is required' });
-  }
-   // Cập nhật trạng thái thành "download_confirmed"
-      const result = await db.collection("stlFile").updateOne(
-        { _id: new ObjectId(fileId), status: "downloading" },
-        { $set: { status: "download_confirmed" } }
-      );
-    res.json({ message: 'Download confirmed' });
+      return res.status(400).json({ message: "fileId is required" });
+    }
+
+    // Lấy thông tin file từ MongoDB
+    const fileDoc = await db.collection("stlFile").findOne({ _id: new ObjectId(fileId) });
+
+    if (!fileDoc) {
+      return res.status(404).json({ message: "File not found" });
+    }
+
+    // Lấy Google Drive file ID từ MongoDB
+    const driveFileId = fileDoc.files[0]?.googleDriveId; // Thay đổi nếu có nhiều file
+
+    if (!driveFileId) {
+      return res.status(400).json({ message: "Google Drive file ID not found" });
+    }
+
+    // Xóa file trên Google Drive
+    await deleteFileFromGoogleDrive(driveFileId);
+
+    // Xóa tài liệu khỏi MongoDB
+    await db.collection("stlFile").deleteOne({ _id: new ObjectId(fileId) });
+
+    res.json({ message: "Download confirmed and file deleted from Google Drive" });
   } catch (error) {
-    res.status(500).json({ message: 'Error confirming download', error });
+    res.status(500).json({ message: "Error confirming download", error: error.message });
   }
-}
+};
 const sendCommand = async (req, res) => {
   try {
     const { command,id } = req.body;
@@ -346,19 +373,73 @@ const getPrinter = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
-const uploadStlChunk = async (req, res) => {
-  try {
-    const { chunk, chunkIndex, totalChunks, fileId, fileName, printId, userId, quantity } = req.body;
-    const db = getDB();
+const authenticateGoogleDrive = () => {
+  const auth = new google.auth.GoogleAuth({
+    credentials: {
+      type: process.env.GOOGLE_TYPE,
+      project_id: process.env.GOOGLE_PROJECT_ID,
+      private_key_id: process.env.GOOGLE_PRIVATE_KEY_ID,
+      private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n"),
+      client_email: process.env.GOOGLE_CLIENT_EMAIL,
+      client_id: process.env.GOOGLE_CLIENT_ID,
+      auth_uri: process.env.GOOGLE_AUTH_URI,
+      token_uri: process.env.GOOGLE_TOKEN_URI,
+      auth_provider_x509_cert_url: process.env.GOOGLE_AUTH_PROVIDER_CERT_URL,
+      client_x509_cert_url: process.env.GOOGLE_CLIENT_CERT_URL,
+    },
+    scopes: ["https://www.googleapis.com/auth/drive.file"],
+  });
+  return google.drive({ version: "v3", auth });
+};
 
-    if (!chunk || !fileId || !fileName || !printId || !userId || chunkIndex === undefined || totalChunks === undefined) {
-      return res.status(400).json({ message: "Dữ liệu không hợp lệ!" });
+const uploadToGoogleDrive = async (filePath, fileName) => {
+  try {
+    const drive = authenticateGoogleDrive();
+
+    const fileMetadata = {
+      name: fileName,
+      parents: [process.env.PARENT_ID], // ID thư mục Drive
+    };
+
+    const res = await drive.files.create({
+      requestBody: fileMetadata,
+      media: {
+        mimeType: "application/octet-stream",
+        body: fs.createReadStream(filePath),
+      },
+      fields: "id, webViewLink, webContentLink",
+    });
+
+    console.log(`✅ File uploaded successfully: ${res.data.id}`);
+    return res.data;
+  } catch (error) {
+    console.error("❌ Error uploading file:", error.message);
+    throw error;
+  }
+};
+
+// Controller xử lý API upload file
+const uploadFile = async (req, res) => {
+  const { fileId, printId, userId, quantity } = req.body;
+  const db = getDB(); // Kết nối MongoDB
+
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded" });
     }
 
-    // Tìm document theo fileId và printId
+    const filePath = req.file.path;
+    const fileName = req.file.originalname;
+
+    // Upload file lên Google Drive
+    const uploadResult = await uploadToGoogleDrive(filePath, fileName);
+
+    // Xóa file tạm sau khi upload thành công
+    fs.unlinkSync(filePath);
+
+    // Kiểm tra xem file đã tồn tại trong MongoDB chưa
     let fileDoc = await db.collection("stlFile").findOne({ fileId, printId, userId });
 
-    // Nếu document chưa tồn tại, tạo mới
     if (!fileDoc) {
       fileDoc = {
         fileId,
@@ -370,50 +451,114 @@ const uploadStlChunk = async (req, res) => {
       await db.collection("stlFile").insertOne(fileDoc);
     }
 
-    // Kiểm tra file đã tồn tại trong `files` chưa
+    // Kiểm tra file đã có trong danh sách files chưa
     let fileIndex = fileDoc.files.findIndex((f) => f.fileName === fileName);
 
     if (fileIndex === -1) {
-      // Nếu file chưa có, thêm mới
+      fileDoc.files.push({
+        fileName,
+        fileContent: uploadResult.webContentLink, // Lưu link file trên Google Drive
+        quantity,
+        createdAt: new Date(),
+      });
+      fileIndex = fileDoc.files.length - 1;
+    } else {
+      // Nếu file đã tồn tại, cập nhật lại nội dung
+      fileDoc.files[fileIndex].fileContent = uploadResult.webContentLink;
+      fileDoc.files[fileIndex].quantity = quantity;
+    }
+
+    // Cập nhật vào MongoDB
+    await db.collection("stlFile").updateOne(
+      { fileId, printId, userId },
+      { $set: { files: fileDoc.files, status: "waiting" } }
+    );
+
+    res.status(200).json({
+      message: "File uploaded successfully",
+      fileId: uploadResult.id,
+      webViewLink: uploadResult.webViewLink,
+      webContentLink: uploadResult.webContentLink,
+    });
+
+  } catch (error) {
+    console.error("❌ Error:", error.message);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+
+// Hàm lưu chunk STL
+const uploadStlChunk = async (req, res) => {
+  try {
+    const { chunk, chunkIndex, totalChunks, fileId, fileName, printId, userId, quantity } = req.body;
+    const db = getDB();
+
+    if (!chunk || !fileId || !fileName || !printId || !userId || chunkIndex === undefined || totalChunks === undefined) {
+      return res.status(400).json({ message: "Dữ liệu không hợp lệ!" });
+    }
+
+    let fileDoc = await db.collection("stlFile").findOne({ fileId, printId, userId });
+
+    if (!fileDoc) {
+      fileDoc = {
+        fileId,
+        printId,
+        userId,
+        files: [],
+        createdAt: new Date(),
+      };
+      await db.collection("stlFile").insertOne(fileDoc);
+    }
+
+    let fileIndex = fileDoc.files.findIndex((f) => f.fileName === fileName);
+
+    if (fileIndex === -1) {
       fileDoc.files.push({
         fileName,
         chunks: [],
-        status:'waiting',
         totalChunks,
         completed: false,
       });
       fileIndex = fileDoc.files.length - 1;
     }
 
-    // Lưu chunk vào file
     fileDoc.files[fileIndex].chunks.push({ chunkIndex, data: chunk });
 
-    // Cập nhật document trong MongoDB
     await db.collection("stlFile").updateOne(
       { fileId, printId, userId },
       { $set: { files: fileDoc.files } }
     );
 
-    // Kiểm tra nếu đã nhận đủ chunk
     if (fileDoc.files[fileIndex].chunks.length === totalChunks) {
-      // Sắp xếp chunk theo `chunkIndex`
       fileDoc.files[fileIndex].chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
-
-      // Ghép thành base64 hoàn chỉnh
       const base64Data = fileDoc.files[fileIndex].chunks.map((c) => c.data).join("");
 
-      // Cập nhật nội dung file và xóa chunks
-      fileDoc.files[fileIndex].fileContent = base64Data;
+      // Chuyển Base64 thành file
+      const buffer = Buffer.from(base64Data, "base64");
+      const fileBaseName = path.basename(fileName, path.extname(fileName));
+    
+      const tempFilePath = path.join(__dirname, `${fileBaseName}-${fileId}.stl`);
+      fs.writeFileSync(tempFilePath, buffer);
+
+      // Upload lên Google Drive
+      const uploadResult = await uploadToGoogleDrive(tempFilePath, `${fileBaseName}_${fileId}.stl`);
+
+      // Xóa file tạm
+      fs.unlinkSync(tempFilePath);
+
+      // Lưu link Google Drive vào MongoDB
+      fileDoc.files[fileIndex].fileContent = uploadResult.webViewLink;
       fileDoc.files[fileIndex].completed = true;
       fileDoc.files[fileIndex].quantity = quantity;
       delete fileDoc.files[fileIndex].chunks;
 
       await db.collection("stlFile").updateOne(
         { fileId, printId, userId },
-        { $set: { files: fileDoc.files } }
+        { $set: { files: fileDoc.files, status: "waiting" } }
       );
 
-      return res.status(200).json({ message: `File ${fileName} uploaded successfully!` });
+      return res.status(200).json({ message: `File ${fileName} uploaded to Google Drive!`, link: uploadResult.webViewLink });
     }
 
     res.status(200).json({ message: `Chunk ${chunkIndex + 1}/${totalChunks} uploaded!` });
@@ -421,35 +566,5 @@ const uploadStlChunk = async (req, res) => {
     res.status(500).json({ message: "Lỗi khi tải lên chunk!", error: error.message });
   }
 };
-const uploadFile = async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'Không có file nào được tải lên' });
-    }
 
-    const db = getDB(); // Lấy MongoDB từ app
-    const bucket = new GridFSBucket(db, { bucketName: 'files' });
-
-    // Chuyển file Buffer thành stream
-    const readableStream = new Readable();
-    readableStream.push(req.file.buffer);
-    readableStream.push(null);
-
-    const uploadStream = bucket.openUploadStream(req.file.originalname);
-    readableStream.pipe(uploadStream);
-
-    uploadStream.on('finish', () => {
-      res.json({ message: 'Upload thành công!', fileName: req.file.originalname });
-    });
-
-    uploadStream.on('error', (err) => {
-      console.error('Lỗi khi lưu file:', err);
-      res.status(500).json({ error: 'Lỗi khi upload file' });
-    });
-
-  } catch (error) {
-    console.error('Lỗi server:', error);
-    res.status(500).json({ error: 'Lỗi server' });
-  }
-};
-module.exports = { getCommandAndUpdateStatus,uploadGcodeFile,sendCommand,updateStatus ,getPrinter,uploadStlChunk,confirmOrder,processGcodePricing,downloadStl,confirmDonwload,uploadFile};
+module.exports = {uploadFile, getCommandAndUpdateStatus,uploadGcodeFile,sendCommand,updateStatus ,getPrinter,uploadStlChunk,confirmOrder,processGcodePricing,downloadStl,confirmDownload};
