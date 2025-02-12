@@ -4,9 +4,20 @@ const authMiddleware = require('../middlewares/authMiddleware');
 const multer = require("multer");
 const router = express.Router();
 
+const fs = require("fs");
+const tmpDir = "/tmp";
+if (!fs.existsSync(tmpDir)) {
+  fs.mkdirSync(tmpDir, { recursive: true });
+}
 
-const storage = multer.memoryStorage(); // Lưu file vào bộ nhớ RAM
-const upload = multer({ storage, limits: { fileSize: 100 * 1024 * 1024 } });
+const storage = multer.diskStorage({
+    destination: "/tmp", // Lưu file vào thư mục /tmp/
+    filename: (req, file, cb) => {
+      cb(null, file.originalname); // Giữ nguyên tên file gốc
+    }
+  });
+  
+  const upload = multer({ storage: storage, limits: { fileSize: 100 * 1024 * 1024 } });
 
   
 router.post('/getCommand', getCommandAndUpdateStatus);

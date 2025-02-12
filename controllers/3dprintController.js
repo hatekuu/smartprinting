@@ -373,8 +373,7 @@ const getPrinter = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
-const CHUNK_DIR = path.join(__dirname, "temp_chunks");
-if (!fs.existsSync(CHUNK_DIR)) fs.mkdirSync(CHUNK_DIR);
+
 
 // Hàm xác thực Google Drive
 const authenticateGoogleDrive = () => {
@@ -396,13 +395,15 @@ const authenticateGoogleDrive = () => {
   return google.drive({ version: "v3", auth });
 };
 
+const CHUNK_DIR = "/tmp";
 
+if (!fs.existsSync(CHUNK_DIR)) fs.mkdirSync(CHUNK_DIR, { recursive: true });
 async function checkAndMergeChunks(fileName, totalChunks) {
-  const filePath = path.join(CHUNK_DIR, fileName);
+  const filePath = `/tmp/${fileName}`;
   const chunkPaths = [];
 
   for (let i = 0; i < totalChunks; i++) {
-    const chunkPath = path.join(CHUNK_DIR, `${fileName}.part${i}`);
+    const chunkPath = `/tmp/${fileName}.part${i}`;
     if (!fs.existsSync(chunkPath)) return; // Chưa nhận đủ chunk
     chunkPaths.push(chunkPath);
   }
@@ -438,7 +439,9 @@ const uploadFile = async (req, res) => {
   if (!file) return res.status(400).json({ error: "No file uploaded" });
 
   try {
-    const chunkPath = path.join(CHUNK_DIR, `${fileName}.part${chunkIndex}`);
+    const chunkPath = `/tmp/${fileName}.part${chunkIndex}`;
+
+
     fs.writeFileSync(chunkPath, file.buffer);
     console.log(`Chunk ${chunkIndex}/${totalChunks} saved: ${chunkPath}`);
 
