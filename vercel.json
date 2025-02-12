@@ -5,5 +5,12 @@
   ],
   "routes": [
     { "src": "/(.*)", "dest": "server.js" }
-  ]
+  ],
+  "functions": {
+    "server.js": {
+      "maxDuration": 10,
+      "memory": 256,
+      "maxSize": "50mb"
+    }
+  }
 }
