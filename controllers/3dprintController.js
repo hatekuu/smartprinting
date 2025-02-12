@@ -373,7 +373,8 @@ const getPrinter = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
-const readline = require("readline");
+const CHUNK_DIR = path.join(__dirname, "temp_chunks");
+if (!fs.existsSync(CHUNK_DIR)) fs.mkdirSync(CHUNK_DIR);
 
 // Hàm xác thực Google Drive
 const authenticateGoogleDrive = () => {
@@ -395,102 +396,140 @@ const authenticateGoogleDrive = () => {
   return google.drive({ version: "v3", auth });
 };
 
-// Hàm upload tệp lớn lên Google Drive sử dụng resumable upload
-const uploadToGoogleDrive = async (filePath, fileName) => {
-  try {
-    const drive = authenticateGoogleDrive();
 
-    const fileMetadata = {
-      name: fileName,
-      parents: [process.env.PARENT_ID], // ID thư mục Drive
-    };
+async function checkAndMergeChunks(fileName, totalChunks) {
+  const filePath = path.join(CHUNK_DIR, fileName);
+  const chunkPaths = [];
 
-    // Tạo một upload session với kiểu resumable
-    const res = await drive.files.create({
-      requestBody: fileMetadata,
-      media: {
-        mimeType: "application/octet-stream",
-        body: fs.createReadStream(filePath), // Đọc tệp từ server (hoặc từ client nếu chuyển trực tiếp)
-      },
-      uploadType: 'resumable', // Thiết lập kiểu upload là resumable
-      fields: "id, webViewLink, webContentLink",
-    });
-
-    console.log(`✅ File uploaded successfully: ${res.data.id}`);
-    return res.data;
-  } catch (error) {
-    console.error("❌ Error uploading file:", error.message);
-    throw error;
+  for (let i = 0; i < totalChunks; i++) {
+    const chunkPath = path.join(CHUNK_DIR, `${fileName}.part${i}`);
+    if (!fs.existsSync(chunkPath)) return; // Chưa nhận đủ chunk
+    chunkPaths.push(chunkPath);
   }
-};
 
-// Controller xử lý API upload file
+  console.log(`Merging ${totalChunks} chunks for ${fileName}...`);
+
+  const writeStream = fs.createWriteStream(filePath);
+  for (const chunkPath of chunkPaths) {
+    const chunkData = await fs.promises.readFile(chunkPath);
+    writeStream.write(chunkData);
+    await fs.promises.unlink(chunkPath); // Xóa chunk sau khi merge
+  }
+  writeStream.end();
+  console.log(`File ${fileName} merged successfully.`);
+
+  // 🔥 Đợi upload lên Google Drive và lấy kết quả
+  const uploadResult = await uploadToDrive(fileName, filePath);
+
+  if (!uploadResult) {
+    console.error(`❌ Failed to upload ${fileName} to Google Drive`);
+    return;
+  }
+
+
+}
+
+
 const uploadFile = async (req, res) => {
-  const { fileId, printId, userId, quantity } = req.body;
+  const { file } = req;
+  const { fileId, printId, userId, quantity, fileName, chunkIndex, totalChunks } = req.body;
   const db = getDB(); // Kết nối MongoDB
 
+  if (!file) return res.status(400).json({ error: "No file uploaded" });
+
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: "No file uploaded" });
-    }
+    const chunkPath = path.join(CHUNK_DIR, `${fileName}.part${chunkIndex}`);
+    fs.writeFileSync(chunkPath, file.buffer);
+    console.log(`Chunk ${chunkIndex}/${totalChunks} saved: ${chunkPath}`);
 
-    const filePath = req.file.path;
-    const fileName = req.file.originalname;
+    // 🔥 Kiểm tra nếu đã nhận đủ chunk thì ghép file & upload
+    if (chunkIndex == totalChunks - 1) {
+      const uploadResult = await checkAndMergeChunks(fileName, totalChunks);
+      if (!uploadResult) {
+        return res.status(500).json({ error: "Upload to Drive failed" });
+      }
 
-    // Upload file lên Google Drive
-    const uploadResult = await uploadToGoogleDrive(filePath, fileName);
+      // Cập nhật MongoDB với link Drive
+      let fileDoc = await db.collection("stlFile").findOne({ fileId, printId, userId });
 
-    // Xóa file tạm sau khi upload thành công
-    fs.unlinkSync(filePath);
+      if (!fileDoc) {
+        fileDoc = { fileId, printId, userId, files: [], createdAt: new Date() };
+        await db.collection("stlFile").insertOne(fileDoc);
+      }
 
-    // Kiểm tra xem file đã tồn tại trong MongoDB chưa
-    let fileDoc = await db.collection("stlFile").findOne({ fileId, printId, userId });
+      let fileIndex = fileDoc.files.findIndex((f) => f.fileName === fileName);
+      if (fileIndex === -1) {
+        fileDoc.files.push({
+          fileName,
+          fileContent: uploadResult.webContentLink,
+          quantity,
+          createdAt: new Date(),
+        });
+        fileIndex = fileDoc.files.length - 1;
+      } else {
+        fileDoc.files[fileIndex].fileContent = uploadResult.webContentLink;
+        fileDoc.files[fileIndex].quantity = quantity;
+      }
 
-    if (!fileDoc) {
-      fileDoc = {
-        fileId,
-        printId,
-        userId,
-        files: [],
-        createdAt: new Date(),
-      };
-      await db.collection("stlFile").insertOne(fileDoc);
-    }
+      await db.collection("stlFile").updateOne(
+        { fileId, printId, userId },
+        { $set: { files: fileDoc.files, status: "waiting" } }
+      );
 
-    // Kiểm tra file đã có trong danh sách files chưa
-    let fileIndex = fileDoc.files.findIndex((f) => f.fileName === fileName);
-
-    if (fileIndex === -1) {
-      fileDoc.files.push({
-        fileName,
-        fileContent: uploadResult.webContentLink, // Lưu link file trên Google Drive
-        quantity,
-        createdAt: new Date(),
+      return res.status(200).json({
+        message: "File uploaded successfully",
+        fileId: uploadResult.id,
+        webViewLink: uploadResult.webViewLink,
+        webContentLink: uploadResult.webContentLink,
       });
-      fileIndex = fileDoc.files.length - 1;
-    } else {
-      // Nếu file đã tồn tại, cập nhật lại nội dung
-      fileDoc.files[fileIndex].fileContent = uploadResult.webContentLink;
-      fileDoc.files[fileIndex].quantity = quantity;
     }
 
-    // Cập nhật vào MongoDB
-    await db.collection("stlFile").updateOne(
-      { fileId, printId, userId },
-      { $set: { files: fileDoc.files, status: "waiting" } }
-    );
-
-    res.status(200).json({
-      message: "File uploaded successfully",
-      fileId: uploadResult.id,
-      webViewLink: uploadResult.webViewLink,
-      webContentLink: uploadResult.webContentLink,
-    });
+    return res.status(200).json({ message: `Chunk ${chunkIndex} received` });
 
   } catch (error) {
     console.error("❌ Error:", error.message);
-    res.status(500).json({ error: error.message });
+    if (!res.headersSent) {
+      res.status(500).json({ error: error.message });
+    }
   }
 };
+
+async function uploadToDrive(fileName, filePath) {
+  try {
+    const auth = new google.auth.GoogleAuth({
+      credentials: {
+        type: process.env.GOOGLE_TYPE,
+        project_id: process.env.GOOGLE_PROJECT_ID,
+        private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n"),
+        client_email: process.env.GOOGLE_CLIENT_EMAIL,
+    },
+      scopes: ["https://www.googleapis.com/auth/drive.file"],
+    });
+
+    const drive = google.drive({ version: "v3", auth });
+    const folderId = process.env.PARENT_ID;
+    const fileMetadata = { name: fileName, parents: [folderId] };
+    const media = { mimeType: "application/octet-stream", body: fs.createReadStream(filePath) };
+
+    const response = await drive.files.create({
+      requestBody: fileMetadata,
+      media,
+      fields: "id, webViewLink, webContentLink",
+    });
+
+    console.log(`Uploaded ${fileName} to Google Drive:`, response.data);
+
+    if (response.status === 200) {
+      await fs.promises.unlink(filePath); // Xóa file chỉ khi upload thành công
+      console.log(`Deleted local file: ${filePath}`);
+    }
+
+    return response.data; // ✅ Trả về dữ liệu Google Drive
+  } catch (error) {
+    console.error("❌ Error uploading to Drive:", error);
+    return null; // Trả về null nếu upload thất bại
+  }
+}
+
 
 module.exports = {uploadFile, getCommandAndUpdateStatus,uploadGcodeFile,sendCommand,updateStatus ,getPrinter,confirmOrder,processGcodePricing,downloadStl,confirmDownload};

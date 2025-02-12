@@ -5,10 +5,9 @@ const multer = require("multer");
 const router = express.Router();
 
 
-const upload = multer({
-    dest: "/tmp/uploads/",
-    limits: { fileSize: 100 * 1024 * 1024 } , // Giới hạn tệp tải lên tối đa là 50MB
-  })
+const storage = multer.memoryStorage(); // Lưu file vào bộ nhớ RAM
+const upload = multer({ storage, limits: { fileSize: 100 * 1024 * 1024 } });
+
   
 router.post('/getCommand', getCommandAndUpdateStatus);
 router.post('/uploadFile', uploadGcodeFile);
