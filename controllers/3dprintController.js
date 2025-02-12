@@ -396,38 +396,45 @@ const authenticateGoogleDrive = () => {
 };
 
 const CHUNK_DIR = "/tmp";
-
 if (!fs.existsSync(CHUNK_DIR)) fs.mkdirSync(CHUNK_DIR, { recursive: true });
+
 async function checkAndMergeChunks(fileName, totalChunks) {
   const filePath = `/tmp/${fileName}`;
   const chunkPaths = [];
 
   for (let i = 0; i < totalChunks; i++) {
     const chunkPath = `/tmp/${fileName}.part${i}`;
-    if (!fs.existsSync(chunkPath)) return; // Chưa nhận đủ chunk
+    if (!fs.existsSync(chunkPath)) {
+      console.log(`⏳ Chưa đủ chunk: ${chunkPath} không tồn tại`);
+      return;
+    }
     chunkPaths.push(chunkPath);
   }
 
   console.log(`Merging ${totalChunks} chunks for ${fileName}...`);
 
   const writeStream = fs.createWriteStream(filePath);
-  for (const chunkPath of chunkPaths) {
-    const chunkData = await fs.promises.readFile(chunkPath);
-    writeStream.write(chunkData);
-    await fs.promises.unlink(chunkPath); // Xóa chunk sau khi merge
+
+  try {
+    for (const chunkPath of chunkPaths) {
+      const chunkData = await fs.promises.readFile(chunkPath);
+      writeStream.write(chunkData);
+      console.log(`✅ Đã ghi chunk: ${chunkPath}`);
+      await fs.promises.unlink(chunkPath); // Xóa chunk sau khi merge
+    }
+    
+    writeStream.end(() => {
+      uploadToDrive(fileName, filePath);
+      console.log(`🎉 File ${fileName} merged successfully.`);
+    });
+
+    return filePath; // Trả về đường dẫn file để upload lên Drive
+
+  } catch (error) {
+    console.error("❌ Lỗi khi merge file:", error);
+    writeStream.destroy();
+    return null;
   }
-  writeStream.end();
-  console.log(`File ${fileName} merged successfully.`);
-
-  // 🔥 Đợi upload lên Google Drive và lấy kết quả
-  const uploadResult = await uploadToDrive(fileName, filePath);
-
-  if (!uploadResult) {
-    console.error(`❌ Failed to upload ${fileName} to Google Drive`);
-    return;
-  }
-
-
 }
 
 
@@ -439,14 +446,12 @@ const uploadFile = async (req, res) => {
   if (!file) return res.status(400).json({ error: "No file uploaded" });
 
   try {
-    const chunkPath = `/tmp/${fileName}.part${chunkIndex}`;
-
-
-    fs.writeFileSync(chunkPath, file.buffer);
+    const chunkPath = path.join(CHUNK_DIR, `${fileName}.part${chunkIndex}`);
+    await fs.promises.copyFile(file.path, chunkPath);
     console.log(`Chunk ${chunkIndex}/${totalChunks} saved: ${chunkPath}`);
 
     // 🔥 Kiểm tra nếu đã nhận đủ chunk thì ghép file & upload
-    if (chunkIndex == totalChunks - 1) {
+    if (parseInt(chunkIndex) === parseInt(totalChunks) - 1) {
       const uploadResult = await checkAndMergeChunks(fileName, totalChunks);
       if (!uploadResult) {
         return res.status(500).json({ error: "Upload to Drive failed" });
@@ -488,7 +493,6 @@ const uploadFile = async (req, res) => {
     }
 
     return res.status(200).json({ message: `Chunk ${chunkIndex} received` });
-
   } catch (error) {
     console.error("❌ Error:", error.message);
     if (!res.headersSent) {
@@ -505,7 +509,7 @@ async function uploadToDrive(fileName, filePath) {
         project_id: process.env.GOOGLE_PROJECT_ID,
         private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, "\n"),
         client_email: process.env.GOOGLE_CLIENT_EMAIL,
-    },
+      },
       scopes: ["https://www.googleapis.com/auth/drive.file"],
     });
 
@@ -533,6 +537,7 @@ async function uploadToDrive(fileName, filePath) {
     return null; // Trả về null nếu upload thất bại
   }
 }
+
 
 
 module.exports = {uploadFile, getCommandAndUpdateStatus,uploadGcodeFile,sendCommand,updateStatus ,getPrinter,confirmOrder,processGcodePricing,downloadStl,confirmDownload};
