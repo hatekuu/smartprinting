@@ -9,29 +9,48 @@ require('dotenv').config();
 const getCommandAndUpdateStatus = async (req, res) => {
   let command = {}; // Tránh lỗi nếu có lỗi xảy ra trước khi command được gán giá trị
   try {
-    const { temperature, status, id, setcommand } = req.body;
+    const { temperature, id, setcommand } = req.body;
     
     if (!id || !ObjectId.isValid(id)) {
       return res.status(400).json({ message: 'ID không hợp lệ hoặc thiếu ID' });
     }
-    
     const db = getDB();
     const updateField = {};
     if (temperature) updateField.temperature = temperature;
-    if (status) updateField.status = status;
+  
     if (setcommand) updateField.command = setcommand;
-    
+    updateField.timeActive=  new Date() 
     const updateResult = await db.collection('3dprint').updateOne(
       { _id: new ObjectId(id) },
       { $set: updateField },
       { upsert: true }
     );
-
     if (updateResult.matchedCount === 0 && updateResult.upsertedCount === 0) {
       return res.status(404).json({ message: 'Không tìm thấy tài liệu để cập nhật' });
     }
 
     command = await db.collection('3dprint').findOne({ _id: new ObjectId(id) });
+    if (command.state === "printing") {
+      return res.status(200).json(command);
+    }
+    if (command.state === "printing_done") {
+      if(command.fileList.length>0){
+        await db.collection('3dprint').updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { state: "printing" } }
+        );
+        return res.status(200).json(command);
+      }
+      else{
+        await db.collection('3dprint').updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { state: "writing" } }
+        );
+        return res.status(404).json({message:"đã in hết file trên máy"});
+      }
+   
+    }
+    
     if (!command) {
       return res.status(404).json({ message: 'Không tìm thấy lệnh' });
     }
@@ -43,26 +62,24 @@ const getCommandAndUpdateStatus = async (req, res) => {
 
     if (command.state === "writing") {
       let maxsize = 2 * 1024 * 1024;
-      let file = await db.collection('gcodefile').findOne({ printId: id, fileName: command.fileName });
-
+      let file = await db.collection('gcodefile').findOne({ printId: id, fileId: command.fileId,fileName: command.fileName });
       if (!file) {
-        let newfile = await db.collection('gcodefile').findOne({ printId: id });
+        let newfile = await db.collection('gcodefile').findOne({ printId: id ,status:{$eq:"confirm"}});
         if (!newfile) {
           await db.collection('3dprint').updateOne(
             { _id: new ObjectId(id) },
             { $set: { state: "writing_done" } }
           );
           command.log = "Không tìm thấy file";
-          return res.status(404).json(command);
+          return res.status(202).json(command);
         }
-
         await db.collection('3dprint').updateOne(
           { _id: new ObjectId(id) },
-          { $set: { fileName: newfile.fileName } }
+          { $set: { fileName: newfile.fileName ,fileId:newfile.fileId} }
         );
         return res.status(200).json(command);
       }
-
+    
       if (file) {
         let filepart = file.fileContent.slice(0, maxsize);
       
@@ -78,9 +95,14 @@ const getCommandAndUpdateStatus = async (req, res) => {
         if (newfileContent.length > 0) {
           await db.collection('gcodefile').updateOne(
             { printId: id, fileName: command.fileName },
-            { $set: { fileContent: newfileContent } }
+            { $set: { fileContent: newfileContent } },
+         
           );
         } else {
+          await db.collection('3dprint').updateOne(
+            { _id: new ObjectId(id) },
+            { $push: { fileList: command.fileName } }
+          );          
           await db.collection('gcodefile').deleteOne({ printId: id, fileName: command.fileName });
         }
       }      
@@ -98,13 +120,14 @@ const uploadGcodeFile = async (req, res) => {
   try {
     const { fileName, fileContent,process } = req.body;
     const db = getDB();
-    const fileData = await db.collection('stlFile').findOne({ status: { $eq: 'download_confirmed' }})
+    const fileData = await db.collection('stlFile').findOne({ status: { $eq: 'done' }})
     if (!fileData) {
       return res.status(404).json({ message: 'Không tìm thấy file STL đã được xác nhận tải xuống' });
     }    
     const {fileId,userId,printId}=fileData
     if(process=='done'){
-      await db.collection('stlFile').deleteOne({fileId:fileId})
+     await db.collection('stlFile').updateOne({fileId:fileId},{$set:{status:"order-not-confirm"}})
+
     }
     // Tìm tất cả các tài liệu có fileName và printId trùng với giá trị trong req.body, sắp xếp theo createdAt để lấy tài liệu mới nhất
     const documents = await db.collection('gcodefile')
@@ -145,7 +168,7 @@ const uploadGcodeFile = async (req, res) => {
 
         const result = await db.collection('gcodefile').updateOne(
           { _id: existingDoc._id },  // Dùng _id để chắc chắn cập nhật đúng tài liệu
-          { $set: { fileContent: updatedContent } }
+          { $set: { fileContent: updatedContent,status:"pending" } }
         );
 
         if (result.modifiedCount === 0) {
@@ -162,6 +185,7 @@ const uploadGcodeFile = async (req, res) => {
         printId,
         fileId,
         userId,
+        status:"pending",
         createdAt: new Date() // Thêm thời gian tạo tài liệu mới
       });
 
@@ -181,7 +205,7 @@ const processGcodePricing = async (req, res) => {
     const db = getDB();
 
     // Lấy tất cả file G-code thỏa mãn điều kiện
-    const gcodeFiles = await db.collection("gcodefile").find({  userId, status:{$eq:"pending"},confirmed:{$ne:'yes'} }).toArray();
+    const gcodeFiles = await db.collection("gcodefile").find({  userId, status:{$eq:"pending"} }).toArray();
 
     if (gcodeFiles.length === 0) {
       return res.status(404).json({ message: "Không tìm thấy file G-code!" });
@@ -193,6 +217,7 @@ const processGcodePricing = async (req, res) => {
         const gcodeContent = gcodeFile.fileContent;
         const fileName = gcodeFile.fileName;
         const fileId=gcodeFile.fileId
+        const gcodeId=gcodeFile._id
         const printId=gcodeFile.printId
         // Tìm thời gian in và lượng filament sử dụng
         const timeMatch = gcodeContent.match(/;TIME:(\d+)/);
@@ -211,6 +236,7 @@ const processGcodePricing = async (req, res) => {
 
         return {
           printId,
+          gcodeId,
           fileId,
           fileName,
           price: totalPrice,
@@ -221,7 +247,7 @@ const processGcodePricing = async (req, res) => {
       .filter(result => result !== null); // Loại bỏ các phần tử null
 
     if (pricingResults.length === 0) {
-      return res.status(400).json({ message: "Không thể đọc thông số từ bất kỳ file G-code nào!" });
+      return res.status(202).json({ message: "Không thể đọc thông số từ bất kỳ file G-code nào!" });
     }
 
     return res.status(200).json({
@@ -236,7 +262,7 @@ const processGcodePricing = async (req, res) => {
 
 const confirmOrder = async (req, res) => {
   try {
-    const { fileId, printId, userId, confirm ,price,fileName} = req.body;
+    const { fileId, printId, userId, confirm ,price,fileName,gcodeId} = req.body;
     const db = getDB();
   
     if (confirm) {
@@ -245,13 +271,15 @@ const confirmOrder = async (req, res) => {
         userId:new ObjectId(userId),
         printId,
         fileId,
+        gcodeId,
         price,
         fileName,
         status: "pending", // Đơn hàng đang chờ xử lý
         createdAt: new Date()
       };
       await db.collection("orders").insertOne(order);
-      await db.collection("gcodefile").updateOne({ fileId, printId }, { $set: { confirmed: "yes" } },{upsert:true});
+      await db.collection("gcodefile").updateOne({ _id:new ObjectId(gcodeId) }, { $set: { status: "confirm" } });
+      await db.collection("3dprint").updateOne({ _id:new ObjectId(printId) }, { $set: { state: "writing" } });
       return res.status(200).json({ message: "Đơn hàng đã được tạo!" });
     } else {
       // Nếu user từ chối, xóa dữ liệu liên quan
@@ -271,11 +299,65 @@ const downloadStl = async(req,res)=>{
       return res.status(200).json({ message: 'No available STL file for download' });
   }
  
-res.json( fileData );
+    res.status(200).json(fileData );
   } catch (error) {
     res.status(500).json({ message: 'Error downloading STL file', error });
   }
 }
+const confirmDownload = async (req, res) => {
+  try {
+    const db = getDB();
+    const { fileId, fileName } = req.body;
+
+    if (!fileId || !fileName) {
+      return res.status(400).json({ message: "fileId và fileName là bắt buộc" });
+    }
+
+    // Lấy thông tin file từ MongoDB
+    const fileDoc = await db.collection("stlFile").findOne({ _id: new ObjectId(fileId) });
+
+    if (!fileDoc) {
+      return res.status(404).json({ message: "File không tồn tại" });
+    }
+
+    // Tìm index của file trong mảng `files`
+    const index = fileDoc.files.findIndex(file => file.fileName === fileName);
+
+    if (index === -1) {
+      return res.status(404).json({ message: "File không tồn tại trong danh sách" });
+    }
+
+    // Lấy Google Drive file ID từ URL
+    const url = fileDoc.files[index]?.fileContent; 
+    const id = url.split("id=")[1]?.split("&")[0] || null;
+
+    if (!id) {
+      return res.status(400).json({ message: "Không tìm thấy Google Drive file ID" });
+    }
+
+    // Xóa file trên Google Drive
+    await deleteFileFromGoogleDrive(id);
+
+    // Cập nhật trạng thái của file trong danh sách `files`
+    await db.collection("stlFile").updateOne(
+      { _id: new ObjectId(fileId), "files.fileName": fileName },
+      { $set: { "files.$.status": "done","files.$.fileContent": ""} }
+    );
+    // Kiểm tra nếu tất cả files đều có status là "done"
+    const updatedDoc = await db.collection("stlFile").findOne({ _id: new ObjectId(fileId) });
+    if (updatedDoc && updatedDoc.files.every(file => file.status === "done")) {
+      await db.collection("stlFile").updateOne(
+        { _id: new ObjectId(fileId) },
+        { $set: { status: "done" } }
+      );
+    }
+
+    res.json({ message: "Xác nhận tải xuống và đã xóa file khỏi Google Drive" });
+  } catch (error) {
+    res.status(500).json({ message: "Lỗi xác nhận tải xuống", error: error.message });
+  }
+};
+
 const deleteFileFromGoogleDrive = async (driveFileId) => {
   try {
     const drive = authenticateGoogleDrive();
@@ -283,40 +365,6 @@ const deleteFileFromGoogleDrive = async (driveFileId) => {
     console.log(`File ${driveFileId} deleted from Google Drive`);
   } catch (error) {
     console.error("Error deleting file from Google Drive:", error.message);
-  }
-};
-const confirmDownload = async (req, res) => {
-  try {
-    const db = getDB();
-    const { fileId,googleFileId } = req.body;
-
-    if (!fileId) {
-      return res.status(400).json({ message: "fileId is required" });
-    }
-
-    // Lấy thông tin file từ MongoDB
-    const fileDoc = await db.collection("stlFile").findOne({ _id: new ObjectId(fileId) });
-
-    if (!fileDoc) {
-      return res.status(404).json({ message: "File not found" });
-    }
-
-    // Lấy Google Drive file ID từ MongoDB
-    const driveFileId = fileDoc.files[0]?.googleDriveId; // Thay đổi nếu có nhiều file
-
-    if (!driveFileId) {
-      return res.status(400).json({ message: "Google Drive file ID not found" });
-    }
-
-    // Xóa file trên Google Drive
-    await deleteFileFromGoogleDrive(driveFileId);
-
-    // Xóa tài liệu khỏi MongoDB
-    await db.collection("stlFile").deleteOne({ _id: new ObjectId(fileId) });
-
-    res.json({ message: "Download confirmed and file deleted from Google Drive" });
-  } catch (error) {
-    res.status(500).json({ message: "Error confirming download", error: error.message });
   }
 };
 const sendCommand = async (req, res) => {
@@ -338,19 +386,15 @@ const sendCommand = async (req, res) => {
 
 const updateStatus = async (req, res) => {
   try {
-    const { readed, printId } = req.body;
+    const { status, printId } = req.body;
     const db = getDB();
     
-    // Validate that 'readed' is a boolean
-    if (typeof readed !== 'boolean') {
-      return res.status(400).json({ message: 'Invalid value for readed' });
-    }
-
+ 
     // If 'readed' is false, just return the message
-    if (!readed) {
-      return res.status(200).json({ message: 'Đã cập nhật trạng thái' });
+    if (!status) {
+      return res.status(200).json({ message: 'Không có giá trị' });
     }
-
+    if(status=="writing_done"){
     // If 'readed' is true, clear the file content in the document
     await db.collection('3dprint').updateOne(
       { _id: new ObjectId(printId) },
@@ -358,7 +402,24 @@ const updateStatus = async (req, res) => {
       { upsert: false } // Setting upsert to false unless you really want to insert a new doc if not found
     );
 
-    res.status(200).json({ message: 'Trạng thái đã được cập nhật' });
+    res.status(200).json({ message: 'Trạng thái đã được cập nhật' });}
+    if(status=="printing"){
+      await db.collection('3dprint').updateOne(
+        { _id: new ObjectId(printId) },
+        { $set: { fileContent: "" ,state:"printing"} },
+        { upsert: false } // Setting upsert to false unless you really want to insert a new doc if not found
+      );
+      res.status(200).json({ message: 'Trạng thái đã được cập nhật' });
+    }
+    if(status=="printing_done"){
+      await db.collection('3dprint').updateOne(
+        { _id: new ObjectId(printId) },
+        { $set: { fileContent: "" ,state:"printing_done"} },
+        { upsert: false } // Setting upsert to false unless you really want to insert a new doc if not found
+      );
+      res.status(200).json({ message: 'Trạng thái đã được cập nhật' });
+    }
+    res.status(404).json({ message: 'Không tồn tại trạng thái này' });
   } catch (error) {
     console.error(error); // Log the error for debugging
     res.status(500).json({ message: 'Lỗi khi cập nhật trạng thái', error: error.message });
@@ -397,8 +458,7 @@ const authenticateGoogleDrive = () => {
 
 const CHUNK_DIR = "/tmp";
 if (!fs.existsSync(CHUNK_DIR)) fs.mkdirSync(CHUNK_DIR, { recursive: true });
-
-async function checkAndMergeChunks(fileName, totalChunks) {
+async function checkAndMergeChunks(fileName, totalChunks, quantity) {
   const filePath = `/tmp/${fileName}`;
   const chunkPaths = [];
 
@@ -406,29 +466,49 @@ async function checkAndMergeChunks(fileName, totalChunks) {
     const chunkPath = `/tmp/${fileName}.part${i}`;
     if (!fs.existsSync(chunkPath)) {
       console.log(`⏳ Chưa đủ chunk: ${chunkPath} không tồn tại`);
-      return;
+      return null;
     }
     chunkPaths.push(chunkPath);
   }
 
   console.log(`Merging ${totalChunks} chunks for ${fileName}...`);
-
   const writeStream = fs.createWriteStream(filePath);
 
   try {
     for (const chunkPath of chunkPaths) {
-      const chunkData = await fs.promises.readFile(chunkPath);
-      writeStream.write(chunkData);
+      await new Promise((resolve, reject) => {
+        const readStream = fs.createReadStream(chunkPath);
+        readStream.pipe(writeStream, { end: false });
+        readStream.on("end", resolve);
+        readStream.on("error", reject);
+      });
       console.log(`✅ Đã ghi chunk: ${chunkPath}`);
-      await fs.promises.unlink(chunkPath); // Xóa chunk sau khi merge
     }
-    
-    writeStream.end(() => {
-      uploadToDrive(fileName, filePath);
-      console.log(`🎉 File ${fileName} merged successfully.`);
-    });
 
-    return filePath; // Trả về đường dẫn file để upload lên Drive
+    return new Promise((resolve, reject) => {
+      writeStream.end(async () => {
+        console.log(`🎉 File ${fileName} merged successfully.`);
+
+        // Xóa các chunk sau khi ghi xong
+        for (const chunkPath of chunkPaths) {
+          await fs.promises.unlink(chunkPath);
+        }
+        console.log(`✅ Tất cả chunks đã bị xóa.`);
+
+        try {
+          const uploadResult = await uploadToDrive(fileName, filePath, quantity);
+          resolve(uploadResult); // ✅ Trả về kết quả upload
+        } catch (uploadError) {
+          console.error("❌ Lỗi khi upload:", uploadError);
+          reject(null);
+        }
+      });
+
+      writeStream.on("error", (error) => {
+        console.error("❌ Lỗi khi merge file:", error);
+        reject(null);
+      });
+    });
 
   } catch (error) {
     console.error("❌ Lỗi khi merge file:", error);
@@ -436,7 +516,6 @@ async function checkAndMergeChunks(fileName, totalChunks) {
     return null;
   }
 }
-
 
 const uploadFile = async (req, res) => {
   const { file } = req;
@@ -452,7 +531,7 @@ const uploadFile = async (req, res) => {
 
     // 🔥 Kiểm tra nếu đã nhận đủ chunk thì ghép file & upload
     if (parseInt(chunkIndex) === parseInt(totalChunks) - 1) {
-      const uploadResult = await checkAndMergeChunks(fileName, totalChunks);
+      const uploadResult = await checkAndMergeChunks(fileName, totalChunks, quantity);
       if (!uploadResult) {
         return res.status(500).json({ error: "Upload to Drive failed" });
       }
@@ -485,10 +564,7 @@ const uploadFile = async (req, res) => {
       );
 
       return res.status(200).json({
-        message: "File uploaded successfully",
-        fileId: uploadResult.id,
-        webViewLink: uploadResult.webViewLink,
-        webContentLink: uploadResult.webContentLink,
+        message: "File uploaded successfully"
       });
     }
 
@@ -501,7 +577,7 @@ const uploadFile = async (req, res) => {
   }
 };
 
-async function uploadToDrive(fileName, filePath) {
+async function uploadToDrive(fileName, filePath, quantity) {
   try {
     const auth = new google.auth.GoogleAuth({
       credentials: {
@@ -515,7 +591,10 @@ async function uploadToDrive(fileName, filePath) {
 
     const drive = google.drive({ version: "v3", auth });
     const folderId = process.env.PARENT_ID;
-    const fileMetadata = { name: fileName, parents: [folderId] };
+    
+    // 🛠️ Tạo tên file theo định dạng mong muốn
+    const driveFileName = `X${quantity}-${fileName}`;
+    const fileMetadata = { name: driveFileName, parents: [folderId] };
     const media = { mimeType: "application/octet-stream", body: fs.createReadStream(filePath) };
 
     const response = await drive.files.create({
@@ -524,7 +603,7 @@ async function uploadToDrive(fileName, filePath) {
       fields: "id, webViewLink, webContentLink",
     });
 
-    console.log(`Uploaded ${fileName} to Google Drive:`, response.data);
+    console.log(`Uploaded ${driveFileName} to Google Drive:`, response.data);
 
     if (response.status === 200) {
       await fs.promises.unlink(filePath); // Xóa file chỉ khi upload thành công

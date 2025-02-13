@@ -518,10 +518,10 @@ const getUserOrders = async (req, res) => {
       .toArray();
 
     if (orders.length === 0) {
-      return res.status(404).json({ message: "Không tìm thấy đơn hàng nào" });
+      return res.status(202).json({ message: "Không tìm thấy đơn hàng nào" });
     }
 
-    return res.json(orders);
+    return res.status(200).json(orders);
   } catch (error) {
     return res.status(500).json({ message: "Lỗi lấy danh sách đơn hàng", error });
   }
