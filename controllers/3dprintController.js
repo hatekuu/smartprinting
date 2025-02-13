@@ -388,43 +388,37 @@ const updateStatus = async (req, res) => {
   try {
     const { status, printId } = req.body;
     const db = getDB();
-    
- 
-    // If 'readed' is false, just return the message
+
     if (!status) {
       return res.status(200).json({ message: 'Không có giá trị' });
     }
-    if(status=="writing_done"){
-    // If 'readed' is true, clear the file content in the document
-    await db.collection('3dprint').updateOne(
+
+    let updateQuery = { $set: { fileContent: "", state: status } };
+
+    if (status === "printing_done") {
+      updateQuery.$pop = { fileList: -1 }; // Xóa phần tử đầu tiên của mảng fileList
+    }
+
+    const result = await db.collection('3dprint').updateOne(
       { _id: new ObjectId(printId) },
-      { $set: { fileContent: "" ,state:"writing_done"} },
-      { upsert: false } // Setting upsert to false unless you really want to insert a new doc if not found
+      updateQuery,
+      { upsert: false }
     );
 
-    res.status(200).json({ message: 'Trạng thái đã được cập nhật' });}
-    if(status=="printing"){
-      await db.collection('3dprint').updateOne(
-        { _id: new ObjectId(printId) },
-        { $set: { fileContent: "" ,state:"printing"} },
-        { upsert: false } // Setting upsert to false unless you really want to insert a new doc if not found
-      );
-      res.status(200).json({ message: 'Trạng thái đã được cập nhật' });
+    if (result.modifiedCount > 0) {
+      return res.status(200).json({ message: 'Trạng thái đã được cập nhật' });
+    } else {
+      return res.status(404).json({ message: 'Không tìm thấy tài liệu hoặc không có thay đổi' });
     }
-    if(status=="printing_done"){
-      await db.collection('3dprint').updateOne(
-        { _id: new ObjectId(printId) },
-        { $set: { fileContent: "" ,state:"printing_done"} },
-        { upsert: false } // Setting upsert to false unless you really want to insert a new doc if not found
-      );
-      res.status(200).json({ message: 'Trạng thái đã được cập nhật' });
-    }
-    res.status(404).json({ message: 'Không tồn tại trạng thái này' });
+
   } catch (error) {
-    console.error(error); // Log the error for debugging
-    res.status(500).json({ message: 'Lỗi khi cập nhật trạng thái', error: error.message });
+    console.error(error);
+    if (!res.headersSent) {
+      return res.status(500).json({ message: 'Lỗi khi cập nhật trạng thái', error: error.message });
+    }
   }
 };
+
 const getPrinter = async (req, res) => {
   try {
     const db = getDB();
@@ -432,6 +426,32 @@ const getPrinter = async (req, res) => {
     return res.status(200).json(result);
   } catch (error) {
     return res.status(500).json({ error: error.message });
+  }
+};
+const getFilePrint = async (req, res) => {
+  try {
+    const { printId } = req.body;
+    const db = getDB();
+
+    // Kiểm tra nếu không có printId
+    if (!printId) {
+      return res.status(400).json({ message: "printId is required" });
+    }
+
+    // Tìm tài liệu trong collection '3dprint'
+    const result = await db.collection("3dprint").findOne({ _id: new ObjectId(printId) });
+
+    // Kiểm tra nếu không tìm thấy tài liệu
+    if (!result) {
+      return res.status(404).json({ message: "Print job not found" });
+    }
+
+    // Trả về danh sách fileList
+    return res.status(200).json({ fileList: result.fileList || [] });
+
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: "Lỗi khi lấy danh sách file", error: error.message });
   }
 };
 
@@ -619,4 +639,4 @@ async function uploadToDrive(fileName, filePath, quantity) {
 
 
 
-module.exports = {uploadFile, getCommandAndUpdateStatus,uploadGcodeFile,sendCommand,updateStatus ,getPrinter,confirmOrder,processGcodePricing,downloadStl,confirmDownload};
+module.exports = {uploadFile,getFilePrint , getCommandAndUpdateStatus,uploadGcodeFile,sendCommand,updateStatus ,getPrinter,confirmOrder,processGcodePricing,downloadStl,confirmDownload};
