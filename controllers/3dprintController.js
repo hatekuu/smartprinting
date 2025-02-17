@@ -438,7 +438,6 @@ const getFilePrint = async (req, res) => {
   try {
     const { printId } = req.body;
     const db = getDB();
-
     // Kiểm tra nếu không có printId
     if (!printId) {
       return res.status(400).json({ message: "printId is required" });
@@ -453,7 +452,7 @@ const getFilePrint = async (req, res) => {
     }
 
     // Trả về danh sách fileList
-    return res.status(200).json({ fileList: result.fileList || [] });
+    return res.status(200).json({ fileList: result.fileList || [] ,filedata:result.data});
 
   } catch (error) {
     console.error(error);
