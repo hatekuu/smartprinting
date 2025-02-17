@@ -1,5 +1,5 @@
 const express = require('express');
-const { getFilePrint ,uploadFile, getCommandAndUpdateStatus, uploadGcodeFile, sendCommand, getPrinter, updateStatus, confirmOrder, processGcodePricing, downloadStl, confirmDownload } = require('../controllers/3dprintController');
+const { postData,getFilePrint ,uploadFile, getCommandAndUpdateStatus, uploadGcodeFile, sendCommand, getPrinter, updateStatus, confirmOrder, processGcodePricing, downloadStl, confirmDownload } = require('../controllers/3dprintController');
 const authMiddleware = require('../middlewares/authMiddleware');
 const multer = require("multer");
 const router = express.Router();
@@ -19,7 +19,7 @@ const storage = multer.diskStorage({
   
   const upload = multer({ storage: storage, limits: { fileSize: 100 * 1024 * 1024 } });
 
-  
+router.post('/postData',postData );
 router.post('/getCommand', getCommandAndUpdateStatus);
 router.post('/getFile', getFilePrint);
 router.post('/uploadFile', uploadGcodeFile);

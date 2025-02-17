@@ -6,29 +6,35 @@ const path = require("path");
 const { getDB } = require('../config/db');
 require('dotenv').config();
 
-const getCommandAndUpdateStatus = async (req, res) => {
-  let command = {}; // Tránh lỗi nếu có lỗi xảy ra trước khi command được gán giá trị
+const postData= async (req,res)=>{
+  const db=getDB()
+  const {id,data}= req.body
+  if (!id || !ObjectId.isValid(id)) {
+    return res.status(400).json({ message: 'ID không hợp lệ hoặc thiếu ID' });
+  }
   try {
-    const { temperature, id, setcommand } = req.body;
-    
-    if (!id || !ObjectId.isValid(id)) {
-      return res.status(400).json({ message: 'ID không hợp lệ hoặc thiếu ID' });
-    }
-    const db = getDB();
-    const updateField = {};
-    if (temperature) updateField.temperature = temperature;
-  
-    if (setcommand) updateField.command = setcommand;
-    updateField.timeActive=  new Date() 
     const updateResult = await db.collection('3dprint').updateOne(
       { _id: new ObjectId(id) },
-      { $set: updateField },
+      { $set: {data:data} },
       { upsert: true }
     );
     if (updateResult.matchedCount === 0 && updateResult.upsertedCount === 0) {
       return res.status(404).json({ message: 'Không tìm thấy tài liệu để cập nhật' });
     }
-
+    return res.status(200).json({message:"Đã cập nhật thành công dữ liệu từ máy in"})
+  } catch (error) {
+    
+  }
+}
+const getCommandAndUpdateStatus = async (req, res) => {
+  let command = {}; // Tránh lỗi nếu có lỗi xảy ra trước khi command được gán giá trị
+  try {
+    const {  id } = req.body;
+    
+    if (!id || !ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'ID không hợp lệ hoặc thiếu ID' });
+    }
+    const db = getDB();
     command = await db.collection('3dprint').findOne({ _id: new ObjectId(id) });
     if (command.state === "printing") {
       return res.status(200).json(command);
@@ -596,7 +602,6 @@ const uploadFile = async (req, res) => {
     }
   }
 };
-
 async function uploadToDrive(fileName, filePath, quantity) {
   try {
     const auth = new google.auth.GoogleAuth({
@@ -636,7 +641,4 @@ async function uploadToDrive(fileName, filePath, quantity) {
     return null; // Trả về null nếu upload thất bại
   }
 }
-
-
-
-module.exports = {uploadFile,getFilePrint , getCommandAndUpdateStatus,uploadGcodeFile,sendCommand,updateStatus ,getPrinter,confirmOrder,processGcodePricing,downloadStl,confirmDownload};
+module.exports = {postData,uploadFile,getFilePrint , getCommandAndUpdateStatus,uploadGcodeFile,sendCommand,updateStatus ,getPrinter,confirmOrder,processGcodePricing,downloadStl,confirmDownload};

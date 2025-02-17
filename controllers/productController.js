@@ -94,7 +94,7 @@ const addToCart = async (req, res) => {
     // Kiểm tra sản phẩm có tồn tại không
     const product = await db.collection('products').findOne({ _id: new ObjectId(productId) });
     if (!product) {
-      return res.status(404).json({ message: 'Sản phẩm không tồn tại hoặc đã hết' });
+      return res.status(404).json({ message: 'Sản phẩm không tồn tại' });
     }
 
     // Kiểm tra user có tồn tại không
@@ -103,23 +103,33 @@ const addToCart = async (req, res) => {
       return res.status(404).json({ message: 'Người dùng không tồn tại' });
     }
 
-    // Cập nhật giỏ hàng
-    if(product.stock<quantity){
-      return res.status(403).json({message:'Sản phẩm đã hết hoặc số lượng ko đủ'})
+    // Kiểm tra số lượng tồn kho
+    if (product.stock < quantity) {
+      return res.status(403).json({ message: 'Sản phẩm đã hết hoặc số lượng không đủ' });
     }
-    await db.collection('users').updateOne(
+
+    // Cập nhật giỏ hàng
+    const cartUpdate = await db.collection('users').updateOne(
       { _id: new ObjectId(userId), 'cart.products.productId': new ObjectId(productId) },
       { $inc: { 'cart.products.$.quantity': quantity } }
     );
 
     // Nếu sản phẩm chưa có trong giỏ hàng, thêm mới
-    await db.collection('users').updateOne(
-      { _id: new ObjectId(userId), 'cart.products.productId': { $ne: new ObjectId(productId) } },
-      {
-        $push: {
-          'cart.products': { productId: new ObjectId(productId), quantity }
+    if (cartUpdate.modifiedCount === 0) {
+      await db.collection('users').updateOne(
+        { _id: new ObjectId(userId) },
+        {
+          $push: {
+            'cart.products': { productId: new ObjectId(productId), quantity }
+          }
         }
-      }
+      );
+    }
+
+    // Giảm số lượng trong kho
+    await db.collection('products').updateOne(
+      { _id: new ObjectId(productId) },
+      { $inc: { stock: -quantity } }
     );
 
     return res.json({ message: 'Đã thêm vào giỏ hàng' });
@@ -127,6 +137,7 @@ const addToCart = async (req, res) => {
     return res.status(500).json({ message: 'Lỗi thêm vào giỏ hàng', error });
   }
 };
+
 // Xóa sản phẩm khỏi giỏ hàng
 const removeFromCart = async (req, res) => {
   try {
@@ -138,24 +149,43 @@ const removeFromCart = async (req, res) => {
 
     const db = getDB();
 
+    // Lấy số lượng sản phẩm trong giỏ hàng trước khi xóa
+    const user = await db.collection('users').findOne(
+      { _id: new ObjectId(userId), 'cart.products.productId': new ObjectId(productId) },
+      { projection: { 'cart.products.$': 1 } }
+    );
+
+    if (!user || !user.cart || !user.cart.products || user.cart.products.length === 0) {
+      return res.status(404).json({ message: 'Sản phẩm không tồn tại trong giỏ hàng' });
+    }
+
+    const quantity = user.cart.products[0].quantity; // Số lượng sản phẩm cần cộng lại vào stock
+
+    // Xóa sản phẩm khỏi giỏ hàng
     await db.collection('users').updateOne(
       { _id: new ObjectId(userId) },
       { $pull: { 'cart.products': { productId: new ObjectId(productId) } } }
     );
 
-    return res.json({ message: 'Đã xóa sản phẩm khỏi giỏ hàng' });
+    // Cộng lại stock cho sản phẩm
+    await db.collection('products').updateOne(
+      { _id: new ObjectId(productId) },
+      { $inc: { stock: quantity } }
+    );
+
+    return res.json({ message: 'Đã xóa sản phẩm khỏi giỏ hàng và cập nhật kho' });
   } catch (error) {
     return res.status(500).json({ message: 'Lỗi xóa sản phẩm', error });
   }
 };
+
 
 // Cập nhật số lượng sản phẩm
 const updateCart = async (req, res) => {
   try {
     const { productId, quantity, userId } = req.body;
 
-    // Kiểm tra dữ liệu đầu vào hợp lệ
-    if (!ObjectId.isValid(userId) || !ObjectId.isValid(productId) || !Number.isInteger(quantity) || quantity <= 0) {
+    if (!ObjectId.isValid(userId) || !ObjectId.isValid(productId) || !Number.isInteger(quantity) || quantity < 0) {
       return res.status(400).json({ message: 'Dữ liệu không hợp lệ' });
     }
 
@@ -175,28 +205,44 @@ const updateCart = async (req, res) => {
 
     // Tìm sản phẩm trong giỏ hàng của user
     const cartProduct = user.cart?.products.find((p) => p.productId.equals(new ObjectId(productId)));
+    const oldQuantity = cartProduct ? cartProduct.quantity : 0;
+    const quantityChange = quantity - oldQuantity;
 
-    if (cartProduct) {
-      // Kiểm tra số lượng tồn kho
-      if (product.stock < quantity) {
-        return res.status(400).json({ message: 'Sản phẩm không đủ hàng trong kho' });
+    if (quantity > 0) {
+      if (quantityChange > 0) {
+        // Nếu tăng số lượng, kiểm tra stock
+        if (product.stock < quantityChange) {
+          return res.status(400).json({ message: 'Sản phẩm không đủ hàng trong kho' });
+        }
       }
 
       // Cập nhật số lượng sản phẩm trong giỏ hàng
       await db.collection('users').updateOne(
         { _id: new ObjectId(userId), 'cart.products.productId': new ObjectId(productId) },
-        { $set: { 'cart.products.$.quantity': quantity } }
+        { $set: { 'cart.products.$.quantity': quantity } },
+        { upsert: true }
       );
-    } else {
-      // Nếu sản phẩm chưa có trong giỏ hàng, thêm vào
-      if (product.stock < quantity) {
-        return res.status(400).json({ message: 'Sản phẩm không đủ hàng trong kho' });
-      }
 
+      // Cập nhật stock
+      await db.collection('products').updateOne(
+        { _id: new ObjectId(productId) },
+        { $inc: { stock: -quantityChange } } // Trừ stock nếu tăng, cộng lại nếu giảm
+      );
+
+    } else {
+      // Nếu số lượng là 0, xóa sản phẩm khỏi giỏ hàng và cập nhật stock
       await db.collection('users').updateOne(
         { _id: new ObjectId(userId) },
-        { $push: { 'cart.products': { productId: new ObjectId(productId), quantity } } }
+        { $pull: { 'cart.products': { productId: new ObjectId(productId) } } }
       );
+
+      // Cộng lại stock cho sản phẩm đã xóa
+      if (oldQuantity > 0) {
+        await db.collection('products').updateOne(
+          { _id: new ObjectId(productId) },
+          { $inc: { stock: oldQuantity } }
+        );
+      }
     }
 
     return res.json({ message: 'Cập nhật giỏ hàng thành công' });
