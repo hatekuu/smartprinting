@@ -102,12 +102,9 @@ const addToCart = async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: 'Người dùng không tồn tại' });
     }
-
-    // Kiểm tra số lượng tồn kho
     if (product.stock < quantity) {
       return res.status(403).json({ message: 'Sản phẩm đã hết hoặc số lượng không đủ' });
     }
-
     // Cập nhật giỏ hàng
     const cartUpdate = await db.collection('users').updateOne(
       { _id: new ObjectId(userId), 'cart.products.productId': new ObjectId(productId) },
@@ -154,7 +151,7 @@ const removeFromCart = async (req, res) => {
       { _id: new ObjectId(userId), 'cart.products.productId': new ObjectId(productId) },
       { projection: { 'cart.products.$': 1 } }
     );
-
+    
     if (!user || !user.cart || !user.cart.products || user.cart.products.length === 0) {
       return res.status(404).json({ message: 'Sản phẩm không tồn tại trong giỏ hàng' });
     }
@@ -164,9 +161,10 @@ const removeFromCart = async (req, res) => {
     // Xóa sản phẩm khỏi giỏ hàng
     await db.collection('users').updateOne(
       { _id: new ObjectId(userId) },
-      { $pull: { 'cart.products': { productId: new ObjectId(productId) } } }
+      { $pull: { 'cart.products': { productId: new ObjectId(productId) } } },
+      {$set:cart.code=""}
     );
-
+ 
     // Cộng lại stock cho sản phẩm
     await db.collection('products').updateOne(
       { _id: new ObjectId(productId) },
@@ -230,12 +228,6 @@ const updateCart = async (req, res) => {
       );
 
     } else {
-      // Nếu số lượng là 0, xóa sản phẩm khỏi giỏ hàng và cập nhật stock
-      await db.collection('users').updateOne(
-        { _id: new ObjectId(userId) },
-        { $pull: { 'cart.products': { productId: new ObjectId(productId) } } }
-      );
-
       // Cộng lại stock cho sản phẩm đã xóa
       if (oldQuantity > 0) {
         await db.collection('products').updateOne(
@@ -402,7 +394,7 @@ const applyDiscount = async (req, res) => {
 // Xác nhận đơn hàng
 const checkout = async (req, res) => {
   try {
-    const { userId,address,discount } = req.body;
+    const { userId,address,discount ,totalPrice} = req.body;
     
     if (!ObjectId.isValid(userId)) {
       return res.status(400).json({ message: 'Dữ liệu không hợp lệ' });
@@ -418,6 +410,7 @@ const checkout = async (req, res) => {
     // Tạo đơn hàng
     const order = {
       userId: new ObjectId(userId),
+      totalPrice,
       products: user.cart.products,
       address: Number(address),
       status: 'pending',
@@ -426,7 +419,7 @@ const checkout = async (req, res) => {
     };
     
     const result = await db.collection('orders').insertOne(order);
-    await db.collection('users').updateOne({ _id: new ObjectId(userId) }, { $set: { 'cart.products': [] } });
+    await db.collection('users').updateOne({ _id: new ObjectId(userId) }, { $set: { 'cart.products': [],code:"" } });
 
     return res.json({ message: 'Đơn hàng đã được xác nhận', orderId: result.insertedId });
   } catch (error) {

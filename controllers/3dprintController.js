@@ -36,6 +36,7 @@ const getCommandAndUpdateStatus = async (req, res) => {
     }
     const db = getDB();
     command = await db.collection('3dprint').findOne({ _id: new ObjectId(id) });
+    await db.collection('3dprint').updateOne({_id: new ObjectId(id)},{$set:{command:""}})
     if (command.state === "printing") {
       return res.status(200).json(command);
     }
@@ -45,6 +46,7 @@ const getCommandAndUpdateStatus = async (req, res) => {
           { _id: new ObjectId(id) },
           { $set: { state: "printing" } }
         );
+        command.state="printing"
         return res.status(200).json(command);
       }
       else{
@@ -52,6 +54,7 @@ const getCommandAndUpdateStatus = async (req, res) => {
           { _id: new ObjectId(id) },
           { $set: { state: "writing" } }
         );
+             command.state="writing"
         return res.status(404).json({message:"đã in hết file trên máy"});
       }
    
@@ -131,6 +134,7 @@ const uploadGcodeFile = async (req, res) => {
       return res.status(404).json({ message: 'Không tìm thấy file STL đã được xác nhận tải xuống' });
     }    
     const {fileId,userId,printId}=fileData
+    const newFileName = userId + "_" + fileId+"_"+fileName; 
     if(process=='done'){
      await db.collection('stlFile').updateOne({fileId:fileId},{$set:{status:"order-not-confirm"}})
 
@@ -140,12 +144,10 @@ const uploadGcodeFile = async (req, res) => {
       .find({ fileName, printId })
       .sort({ createdAt: -1 })  // Giả sử có trường createdAt để sắp xếp theo thời gian
       .toArray();
-
     let existingDoc = null;
     if (documents.length > 0) {
       existingDoc = documents[0]; // Lấy tài liệu cuối cùng (mới nhất)
     }
-
     if (existingDoc) {
       // Kiểm tra kích thước của fileContent đã có trong cơ sở dữ liệu
       const existingContentLength = existingDoc.fileContent ? existingDoc.fileContent.length : 0;
@@ -154,7 +156,7 @@ const uploadGcodeFile = async (req, res) => {
       if (existingContentLength > 5 * 1024 * 1024) {
         // Dung lượng quá lớn, không thực hiện update mà chỉ thêm phần mới vào
         const result = await db.collection('gcodefile').insertOne({
-          fileName,
+          fileName:newFileName,
           fileContent,
           printId,
           fileId,
@@ -186,7 +188,7 @@ const uploadGcodeFile = async (req, res) => {
     } else {
       // Nếu không tìm thấy tài liệu trùng với fileName và printId, thực hiện insertOne
       const result = await db.collection('gcodefile').insertOne({
-        fileName,
+        fileName:newFileName,
         fileContent,
         printId,
         fileId,
@@ -375,12 +377,11 @@ const deleteFileFromGoogleDrive = async (driveFileId) => {
 };
 const sendCommand = async (req, res) => {
   try {
-    const { command,id } = req.body;
+    const { command,printId } = req.body;
     const db = getDB();
     const result = await db.collection('3dprint').updateOne(
-      { _id: new ObjectId(id) },
-      { $set: { command } },
-      { upsert: true })
+      { _id: new ObjectId(printId) },
+      { $set: { command } })
     if (result.insertedCount === 0) {
       return res.status(500).json({ message: 'Lỗi khi gửi lệnh' });
     }
@@ -546,7 +547,9 @@ const uploadFile = async (req, res) => {
   const { file } = req;
   const { fileId, printId, userId, quantity, fileName, chunkIndex, totalChunks } = req.body;
   const db = getDB(); // Kết nối MongoDB
-
+  if (fileName.length > 20 || /[<>:"\/\\|?*]/.test(fileName)) {
+    return res.status(400).json({ error: "Tên file không hợp lệ" });
+}
   if (!file) return res.status(400).json({ error: "No file uploaded" });
 
   try {
@@ -640,4 +643,6 @@ async function uploadToDrive(fileName, filePath, quantity) {
     return null; // Trả về null nếu upload thất bại
   }
 }
-module.exports = {postData,uploadFile,getFilePrint , getCommandAndUpdateStatus,uploadGcodeFile,sendCommand,updateStatus ,getPrinter,confirmOrder,processGcodePricing,downloadStl,confirmDownload};
+module.exports = {postData,uploadFile,getFilePrint ,
+   getCommandAndUpdateStatus,uploadGcodeFile,sendCommand,updateStatus 
+   ,getPrinter,confirmOrder,processGcodePricing,downloadStl,confirmDownload};
