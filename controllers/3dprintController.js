@@ -36,7 +36,7 @@ const getCommandAndUpdateStatus = async (req, res) => {
     }
     const db = getDB();
     command = await db.collection('3dprint').findOne({ _id: new ObjectId(id) });
-    await db.collection('3dprint').updateOne({_id: new ObjectId(id)},{$set:{command:""}})
+  
     if (command.state === "printing") {
       return res.status(200).json(command);
     }
@@ -64,8 +64,8 @@ const getCommandAndUpdateStatus = async (req, res) => {
       return res.status(404).json({ message: 'Không tìm thấy lệnh' });
     }
 
-    if (command.state === "writing_done") {
-      command.log = "Hiện tại chưa có file mới";
+    if (command.state === "writing_done"||command.state === "printing_done"||command.state === "printing") {
+      command.log = "Hiện tại chưa có file mới hoặc đang in";
       return res.status(200).json(command);
     }
 
@@ -161,7 +161,7 @@ const uploadGcodeFile = async (req, res) => {
           printId,
           fileId,
           userId,
-          status:"pending",
+          status:"waiting-confirm",
           createdAt: new Date() // Thêm thời gian tạo tài liệu mới
         });
 
@@ -193,7 +193,7 @@ const uploadGcodeFile = async (req, res) => {
         printId,
         fileId,
         userId,
-        status:"pending",
+        status:"waiting-confirm",
         createdAt: new Date() // Thêm thời gian tạo tài liệu mới
       });
 
@@ -213,7 +213,7 @@ const processGcodePricing = async (req, res) => {
     const db = getDB();
 
     // Lấy tất cả file G-code thỏa mãn điều kiện
-    const gcodeFiles = await db.collection("gcodefile").find({  userId, status:{$eq:"pending"} }).toArray();
+    const gcodeFiles = await db.collection("gcodefile").find({  userId, status:{$eq:"waiting-confirm"} }).toArray();
 
     if (gcodeFiles.length === 0) {
       return res.status(404).json({ message: "Không tìm thấy file G-code!" });
@@ -353,6 +353,7 @@ const confirmDownload = async (req, res) => {
     );
     // Kiểm tra nếu tất cả files đều có status là "done"
     const updatedDoc = await db.collection("stlFile").findOne({ _id: new ObjectId(fileId) });
+    console.log(fileId)
     if (updatedDoc && updatedDoc.files.every(file => file.status === "done")) {
       await db.collection("stlFile").updateOne(
         { _id: new ObjectId(fileId) },
