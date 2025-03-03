@@ -1,5 +1,5 @@
 const express = require('express');
-const { postData,getFilePrint ,uploadFile, getCommandAndUpdateStatus, uploadGcodeFile, sendCommand, getPrinter, updateStatus, confirmOrder, processGcodePricing, downloadStl, confirmDownload } = require('../controllers/3dprintController');
+const { filterPrint,postData,getFilePrint ,uploadFile, getCommandAndUpdateStatus, uploadGcodeFile, sendCommand, getPrinter, updateStatus, confirmOrder, processGcodePricing, downloadStl, confirmDownload } = require('../controllers/3dprintController');
 const authMiddleware = require('../middlewares/authMiddleware');
 const multer = require("multer");
 const router = express.Router();
@@ -27,6 +27,7 @@ router.post('/sendCommand', sendCommand);
 router.post('/updateStatus', updateStatus);
 router.post('/getPrinter', authMiddleware, getPrinter);
 
+router.post('/filterPrint', filterPrint);
 router.post('/confirm-order', confirmOrder);
 router.post('/gcodepricing', processGcodePricing);
 router.post('/download-stl', downloadStl);

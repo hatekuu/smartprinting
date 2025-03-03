@@ -1,8 +1,9 @@
 const { ObjectId } = require('mongodb');
 const { getDB } = require('../config/db');
-
+const { getPipelineFromDB } = require('../services/aggregationService');
 
 // Lấy danh sách tất cả người dùng (chỉ dành cho 'manager')
+
 const getAllUsers = async (req, res) => {
   try {
     const db = getDB();
@@ -17,16 +18,15 @@ const getAllUsers = async (req, res) => {
 };
 const addProduct = async (req, res) => {
   try {
-    const { name, price, description, stock,category } = req.body;
-
+    const { name, price,priceBuy, description, stock,category } = req.body;
     if (!name || !price || !description ) {
       return res.status(400).json({ message: 'Thiếu thông tin sản phẩm' });
     }
-
     const db = getDB();
     const result = await db.collection('products').insertOne({
       name,
       price,
+      priceBuy,
       description,
       category,
       stock,
@@ -42,7 +42,7 @@ const addProduct = async (req, res) => {
 
 const updateProduct = async (req, res) => {
   try {
-    const { _id, name, price, description, stock,category } = req.body;
+    const { _id, name, price,priceBuy, description, stock,category } = req.body;
 
     if (!_id || !ObjectId.isValid(_id)) {
       return res.status(400).json({ message: 'ID không hợp lệ' });
@@ -52,6 +52,7 @@ const updateProduct = async (req, res) => {
     if (name) updateData.name = name;
     if (name) updateData.category = category;
     if (price) updateData.price = Number(price);
+    if (priceBuy) updateData.price = Number(priceBuy);
     if (description) updateData.description = description;
     if (stock !== undefined) updateData.stock = Number(stock);
 
@@ -102,38 +103,13 @@ const getAllOrders = async (req, res) => {
   try {
     const db = getDB();
 
-    // Định nghĩa thứ tự ưu tiên cho trạng thái
-    const statusPriority = {
-      pending: 1,   // Chờ xử lý (quan trọng nhất)
-      processing: 2, // Đang xử lý
-      shipped: 3,   // Đang giao
-      completed: 4, // Đã hoàn thành
-      cancelled: 5  // Bị hủy (hiển thị sau cùng)
-    };
-
+  
+    const pipelineDoc = await getPipelineFromDB("getAllOrdersPipeline")
     // Truy vấn tất cả đơn hàng, sắp xếp theo trạng thái + thời gian
     const orders = await db.collection("orders")
-      .aggregate([
-        {
-          $addFields: {
-            statusPriority: {
-              $switch: {
-                branches: [
-                  { case: { $eq: ["$status", "pending"] }, then: 1 },
-                  { case: { $eq: ["$status", "processing"] }, then: 2 },
-                  { case: { $eq: ["$status", "shipped"] }, then: 3 },
-                  { case: { $eq: ["$status", "completed"] }, then: 4 },
-                  { case: { $eq: ["$status", "cancelled"] }, then: 5 },
-                ],
-                default: 99 // Nếu trạng thái không hợp lệ
-              }
-            }
-          }
-        },
-        { $sort: { statusPriority: 1, createdAt: -1 } }, // Sắp xếp theo trạng thái, sau đó thời gian mới nhất
-        { $project: { statusPriority: 0 } } // Ẩn trường tạm statusPriority
-      ])
-      .toArray();
+    .aggregate(pipelineDoc)
+    .toArray();
+
 
     if (orders.length === 0) {
       return res.status(404).json({ message: "Không có đơn hàng nào" });
@@ -254,6 +230,11 @@ const addPrinter = async (req, res) => {
     const result = await db.collection('printer').insertOne({ 
       url,
       api,
+      fileList:[],
+      fileContent:"",
+      state:"",
+      fileId:"",
+      command:"",
       lasUpdated: new Date(),
       Printer:{Name, Type,Filament,Color,Size }});
     if (result.insertedCount === 0) {
@@ -266,15 +247,15 @@ const addPrinter = async (req, res) => {
 }
 const updatePrinter = async (req, res) => {
   try {
- 
+  
     const { Name, Type, Filament, Color, Size, url, api,id } = req.body;
-    
+ 
     if (!ObjectId.isValid(id)) {
       return res.status(400).json({ message: 'ID không hợp lệ' });
     }
-
     const db = getDB();
-    const result = await db.collection('printer').updateOne(
+
+    const result = await db.collection('3dprint').updateOne(
       { _id: new ObjectId(id) },
       {
         $set: {
@@ -289,8 +270,7 @@ const updatePrinter = async (req, res) => {
     if (result.matchedCount === 0) {
       return res.status(404).json({ message: 'Không tìm thấy máy in' });
     }
-
-    res.status(200).json({ message: 'Cập nhật thành công' });
+    res.status(200).json({ message: 'Cập nhật thành công' ,result});
   } catch (error) {
     res.status(500).json({ message: 'Lỗi khi cập nhật máy in', error: error.message });
   }
@@ -317,7 +297,79 @@ const deletePrinter = async (req, res) => {
   }
 };
 
+const getPrinter = async (req, res) => {
+  try {
+    const db = getDB();
+    const result = await db.collection('3dprint').find().toArray();
+    return res.status(200).json(result);
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+const calculateRevenueByTime = async (req, res) => {
+  const { category, startDate, endDate, page = 1, limit = 10 } = req.body;
+
+  if (!startDate || !endDate) {
+    return res.status(400).json({ error: "Vui lòng cung cấp startDate và endDate!" });
+  }
+
+  try {
+    const db = getDB();
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    end.setUTCHours(23, 59, 59, 999);
+
+    // Lấy pipeline từ MongoDB
+    let aggregationDoc = await getPipelineFromDB("revenueByCategory");
+    if (!aggregationDoc) {
+      return res.status(404).json({ error: "Aggregation pipeline không tồn tại" });
+    }
+
+    // Tạo bản sao để tránh sửa trực tiếp pipeline trong MongoDB
+    const pipeline = JSON.parse(JSON.stringify(aggregationDoc));
+
+    // Thay thế các giá trị động vào pipeline
+    const modifiedPipeline = pipeline.map(stage => {
+      if (stage.$match && stage.$match.createdAt) {
+        stage.$match.createdAt = { $gte: start, $lte: end };
+      }
+      if (category && stage.$match && stage.$match["productDetails.category"]) {
+        stage.$match["productDetails.category"] = category;
+      }
+      return stage;
+    });
+
+    // Thêm `$facet` để tính tổng sản phẩm
+    modifiedPipeline.push({
+      "$facet": {
+        "data": [
+          { "$sort": { "totalRevenue": -1 } },
+          { "$skip": skip },
+          { "$limit": parseInt(limit) }
+        ],
+        "totalCount": [
+          { "$group": { "_id": null, "total": { "$sum": 1 } } }
+        ]
+      }
+    });
+
+    // Thực hiện aggregation trên collection "orders"
+    const results = await db.collection("orders").aggregate(modifiedPipeline).toArray();
+
+    // Tính tổng số trang dựa trên số lượng sản phẩm trong danh mục
+    const totalProducts = results[0].totalCount.length ? results[0].totalCount[0].total : 0;
+    const totalPages = Math.ceil(totalProducts / limit);
+
+    res.json({ data: results[0].data, totalPages });
+
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+};
+
 module.exports = { getAllUsers ,
   updateOrderStatus,getRevenueReport,getTopSellingProducts,getPromotionEffectiveness,
   updateProduct,addProduct,deleteProduct,
-  addPrinter,updatePrinter,deletePrinter,getAllOrders};
+  addPrinter,updatePrinter,deletePrinter,getAllOrders,getPrinter,calculateRevenueByTime};

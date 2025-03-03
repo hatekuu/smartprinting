@@ -5,6 +5,7 @@ const managerRoutes = require('./routes/managerRoutes');
 const productRoutes = require('./routes/productRoutes');
 const userRoutes = require('./routes/userRoutes');
 const printRoutes = require('./routes/3dprintRoutes');
+const paymentRoutes = require('./routes/paymentRouter');
 const cron = require('node-cron');
 const { cleanupExpiredTokens } = require('./services/blacklistService');
 const cors = require('cors');
@@ -16,11 +17,7 @@ const app = express();
 const allowedOrigins = process.env.URL ? [process.env.URL] : '*';
 
 // Cấu hình CORS
-app.use(cors({
-  origin: allowedOrigins, 
-  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-  credentials: true, 
-}));
+app.use(cors());
 
 // Giới hạn dung lượng request body
 app.use(express.json({ limit: '100mb' }));
@@ -45,7 +42,7 @@ app.use('/api/manager', managerRoutes);
 app.use('/api/product', productRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/3dprint', printRoutes);
-
+app.use('/api/payment', paymentRoutes);
 // Middleware xử lý lỗi
 app.use((err, req, res, next) => {
   console.error(err.stack);

@@ -1,5 +1,5 @@
 const { ObjectId  } = require('mongodb');
-
+const { getPipelineFromDB } = require('../services/aggregationService');
 const { google } = require("googleapis");
 const fs = require("fs");
 const path = require("path");
@@ -209,64 +209,35 @@ const uploadGcodeFile = async (req, res) => {
 };
 const processGcodePricing = async (req, res) => {
   try {
-    const {  userId } = req.body;
+    const { userId } = req.body;
     const db = getDB();
-
-    // Lấy tất cả file G-code thỏa mãn điều kiện
-    const gcodeFiles = await db.collection("gcodefile").find({  userId, status:{$eq:"waiting-confirm"} }).toArray();
+    const pipeline=await getPipelineFromDB("gcodePricingPipeline")
+    if (!pipeline ) {
+      return res.status(500).json({ message: "Pipeline không tồn tại!" });
+    }
+    const modifiedPipeline = pipeline.map(stage => {
+      if (stage.$match ) {
+        stage.$match.userId =userId;
+      }
+      return stage;
+    });
+    const gcodeFiles = await db.collection("gcodefile").aggregate(modifiedPipeline).toArray();
 
     if (gcodeFiles.length === 0) {
-      return res.status(404).json({ message: "Không tìm thấy file G-code!" });
-    }
-
-    // Duyệt qua từng file, lọc các file hợp lệ và tính tiền
-    const pricingResults = gcodeFiles
-      .map(gcodeFile => {
-        const gcodeContent = gcodeFile.fileContent;
-        const fileName = gcodeFile.fileName;
-        const fileId=gcodeFile.fileId
-        const gcodeId=gcodeFile._id
-        const printId=gcodeFile.printId
-        // Tìm thời gian in và lượng filament sử dụng
-        const timeMatch = gcodeContent.match(/;TIME:(\d+)/);
-        const filamentMatch = gcodeContent.match(/;Filament used:\s*(\d+\.?\d*)m/);
-
-        // Nếu không có thông tin cần thiết, bỏ qua file này
-        if (!timeMatch || !filamentMatch) return null;
-
-        const printTime = parseInt(timeMatch[1]); // Thời gian in (giây)
-        const filamentUsed = parseFloat(filamentMatch[1]); // Lượng filament (mét)
-
-        // Giá theo thời gian và vật liệu (ví dụ: 50 đồng/phút, 200 đồng/mét filament)
-        const pricePerMinute = 50;
-        const pricePerMeter = 200;
-        const totalPrice = (printTime / 60) * pricePerMinute + filamentUsed * pricePerMeter;
-
-        return {
-          printId,
-          gcodeId,
-          fileId,
-          fileName,
-          price: totalPrice,
-          printTime,
-          filamentUsed
-        };
-      })
-      .filter(result => result !== null); // Loại bỏ các phần tử null
-
-    if (pricingResults.length === 0) {
       return res.status(202).json({ message: "Không thể đọc thông số từ bất kỳ file G-code nào!" });
     }
 
     return res.status(200).json({
       message: "Tính giá thành công!",
-      pricing: pricingResults
+      pricing: gcodeFiles
     });
 
   } catch (error) {
     res.status(500).json({ message: "Lỗi khi xử lý giá!", error: error.message });
   }
 };
+
+   
 
 const confirmOrder = async (req, res) => {
   try {
@@ -380,9 +351,10 @@ const sendCommand = async (req, res) => {
   try {
     const { command,printId } = req.body;
     const db = getDB();
+    console.log(command)
     const result = await db.collection('3dprint').updateOne(
       { _id: new ObjectId(printId) },
-      { $set: { command } })
+      { $set: { command:command}  })
     if (result.insertedCount === 0) {
       return res.status(500).json({ message: 'Lỗi khi gửi lệnh' });
     }
@@ -391,6 +363,66 @@ const sendCommand = async (req, res) => {
     res.status(500).json({ message: 'Lỗi khi gửi lệnh', error: error.message });
   }
 }
+const filterPrint = async (req, res) => { 
+  try {
+    const db = getDB();
+    const { Filament, Color, Size, type, sort } = req.body;
+    let pipeline = [];
+    let matchConditions = {};
+    
+    // Lấy pipeline mặc định từ collection "PrintForm"
+    const pipeLineDB = await db.collection('aggregate').findOne({ _id: "PrintForm" });
+    
+    // Xây dựng điều kiện lọc
+    if (Filament) {
+      matchConditions["Printer.Filament"] = Filament;
+    }
+    if (Color) {
+      matchConditions["Printer.Color"] = Color;
+    }
+    if (Size) {
+      matchConditions["Printer.Size"] = Size;
+    }
+
+    // Nếu có bất kỳ điều kiện lọc nào, thêm vào pipeline
+    if (Object.keys(matchConditions).length > 0) {
+      pipeline.push({ $match: matchConditions });
+    }
+    
+    // Thêm PoweSort hoặc SortFileCount vào pipeline nếu có type và sort
+    if (type && sort) {
+      if (type === "power") {
+        // Thêm PoweSort vào pipeline
+        pipeLineDB.pipline.PoweSort.forEach(step => {
+          if (step.$addFields) {
+            step.$addFields.power = sort; // Thay power bằng giá trị sort
+          }
+          pipeline.push(step);
+        });
+      } else if (type === "file") {
+        // Thêm SortFileCount vào pipeline
+        pipeLineDB.pipline.SortFileCount.forEach(step => {
+          if (step.$addFields) {
+            step.$addFields.fileSort = sort; // Thay fileSort bằng giá trị sort
+          }
+          pipeline.push(step);
+        });
+      }
+    }
+
+    // Thêm filterInfo vào pipeline
+    pipeline.push(...pipeLineDB.pipline.filterInfo);
+
+    // Thực thi aggregate
+    const result = await db.collection('3dprint').aggregate(pipeline).toArray();
+    return res.status(200).json(result);
+
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+
 
 const updateStatus = async (req, res) => {
   try {
@@ -646,4 +678,4 @@ async function uploadToDrive(fileName, filePath, quantity) {
 }
 module.exports = {postData,uploadFile,getFilePrint ,
    getCommandAndUpdateStatus,uploadGcodeFile,sendCommand,updateStatus 
-   ,getPrinter,confirmOrder,processGcodePricing,downloadStl,confirmDownload};
+   ,getPrinter,confirmOrder,processGcodePricing,downloadStl,confirmDownload,filterPrint};

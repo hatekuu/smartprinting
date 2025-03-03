@@ -394,7 +394,7 @@ const applyDiscount = async (req, res) => {
 // Xác nhận đơn hàng
 const checkout = async (req, res) => {
   try {
-    const { userId,address,discount ,totalPrice} = req.body;
+    const { userId,address,discountId ,totalPrice} = req.body;
     
     if (!ObjectId.isValid(userId)) {
       return res.status(400).json({ message: 'Dữ liệu không hợp lệ' });
@@ -415,13 +415,24 @@ const checkout = async (req, res) => {
       address: Number(address),
       status: 'pending',
       createdAt: new Date(),
-      ...(discount ? { discount: discount } : {}) // Nếu discount có giá trị, thêm vào object
+      ...(discountId ? { discountId: discountId } : {}) // Nếu discount có giá trị, thêm vào object
     };
-    
     const result = await db.collection('orders').insertOne(order);
-    await db.collection('users').updateOne({ _id: new ObjectId(userId) }, { $set: { 'cart.products': [],code:"" } });
-
-    return res.json({ message: 'Đơn hàng đã được xác nhận', orderId: result.insertedId });
+    await db.collection('users').updateOne({ _id: new ObjectId(userId) }, { $set: {cart:{}}} );
+    const check = await db.collection('discounts').updateOne(
+      { _id: new ObjectId(discountId), "user.userId": userId }, // Kiểm tra nếu user đã tồn tại
+      { $inc: { "user.$.amountUsed": 1 } } // Nếu có, tăng amountUsed lên 1
+  );
+  
+  // Nếu user chưa có trong danh sách user, thêm mới
+  if (check.modifiedCount === 0) {
+      await db.collection('discounts').updateOne(
+          { _id: new ObjectId(discountId) },
+          { $push: { user: { userId: userId, amountUsed: 1 } } } // Thêm user mới với amountUsed = 1
+      );
+  }
+  
+      return res.json({ message: 'Đơn hàng đã được xác nhận', orderId: result.insertedId });
   } catch (error) {
     return res.status(500).json({ message: 'Lỗi xác nhận đơn hàng', error });
   }
@@ -647,6 +658,7 @@ const confirmReceived = async (req, res) => {
     return res.status(500).json({ message: "Lỗi xác nhận đơn hàng", error });
   }
 };
+
 module.exports = {
   getDiscount,suggestKeyword,findProduct, getProducts, getProductById,
   addToCart,removeFromCart,updateCart,applyDiscount,checkout,getCart,

@@ -4,7 +4,7 @@ const {
     getAllUsers,
     getAllOrders,updateOrderStatus ,getRevenueReport,getTopSellingProducts,getPromotionEffectiveness,
     updateProduct,addProduct,deleteProduct,
-  addPrinter,updatePrinter,deletePrinter
+  addPrinter,updatePrinter,deletePrinter,getPrinter,calculateRevenueByTime
     } = require('../controllers/managerController');
 const authMiddleware = require('../middlewares/authMiddleware');
 const router = express.Router();
@@ -20,6 +20,8 @@ router.post('/deleteProduct', authMiddleware, verifyRole('manager'), deleteProdu
 router.post('/addPrinter',authMiddleware, verifyRole('manager'), addPrinter);
 router.post('/deletePrinter',authMiddleware, verifyRole('manager'), deletePrinter);
 router.post('/updatePrinter',authMiddleware, verifyRole('manager'), updatePrinter);
+router.post('/getPrinter',authMiddleware, verifyRole('manager'), getPrinter);
 router.post('/allorder',getAllOrders)
 router.put('/orders/update', updateOrderStatus);
+router.post('/orders/profit', calculateRevenueByTime);
 module.exports = router;
