@@ -354,6 +354,7 @@ const sendCommand = async (req, res) => {
     if (!printId || !ObjectId.isValid(printId)) {
       return res.status(400).json({ message: 'ID không hợp lệ hoặc thiếu ID' });
     }
+
     if (command ==="none"){
       const result = await db.collection('3dprint').updateOne(
         { _id: new ObjectId(printId) },
@@ -369,9 +370,9 @@ const sendCommand = async (req, res) => {
         if (result.insertedCount === 0) {
           return res.status(500).json({ message: 'Lỗi khi gửi lệnh' });
         }
-        res.status(200).json({ message: 'Đã gửi lệnh' });
+        
     }
-  
+    res.status(200).json({ message: 'Đã gửi lệnh' });
   } catch (error) {
     res.status(500).json({ message: 'Lỗi khi gửi lệnh', error: error.message });
   }
