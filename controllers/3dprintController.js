@@ -351,14 +351,27 @@ const sendCommand = async (req, res) => {
   try {
     const { command,printId } = req.body;
     const db = getDB();
-    console.log(command)
-    const result = await db.collection('3dprint').updateOne(
-      { _id: new ObjectId(printId) },
-      { $set: { command:command}  })
-    if (result.insertedCount === 0) {
-      return res.status(500).json({ message: 'Lỗi khi gửi lệnh' });
+    if (!printId || !ObjectId.isValid(printId)) {
+      return res.status(400).json({ message: 'ID không hợp lệ hoặc thiếu ID' });
     }
-    res.status(200).json({ message: 'Đã gửi lệnh' });
+    if (command ==="none"){
+      const result = await db.collection('3dprint').updateOne(
+        { _id: new ObjectId(printId) },
+        { $set: { command:""}  })
+      if (result.insertedCount === 0) {
+        return res.status(500).json({ message: 'Lỗi khi gửi lệnh' });
+      }
+    }
+    else{
+      const result = await db.collection('3dprint').updateOne(
+        { _id: new ObjectId(printId) },
+        { $set: { command:command}  })
+        if (result.insertedCount === 0) {
+          return res.status(500).json({ message: 'Lỗi khi gửi lệnh' });
+        }
+        res.status(200).json({ message: 'Đã gửi lệnh' });
+    }
+  
   } catch (error) {
     res.status(500).json({ message: 'Lỗi khi gửi lệnh', error: error.message });
   }
