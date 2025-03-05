@@ -1,17 +1,20 @@
 const { ObjectId } = require('mongodb');
 const { getDB } = require('../config/db');
 const axios = require('axios');
+const crypto = require('crypto');
+require('dotenv').config();
+var accessKey = 'F8BBA842ECF85';
+var secretKey = 'K951B6PE1waDMi640xX08PD3vg6EkVlz';
 const payment=async(req,res)=>{
 //https://developers.momo.vn/#/docs/en/aiov2/?id=payment-method
 //parameters
-var accessKey = 'F8BBA842ECF85';
-var secretKey = 'K951B6PE1waDMi640xX08PD3vg6EkVlz';
+const {amount}=req.body
 var orderInfo = 'pay with MoMo';
 var partnerCode = 'MOMO';
-var redirectUrl = 'https://webhook.site/b3088a6a-2d17-4f8d-a383-71389a6c600b';
-var ipnUrl = 'https://smartprinting.vercel.app/api/payment/paymentCallback';
+var redirectUrl = `${process.env.URL}/smart3D/products/cart`;
+var ipnUrl = process.env.CALL_BACK;
 var requestType = "payWithMethod";
-var amount = '10000';
+
 var orderId = partnerCode + new Date().getTime();
 var requestId = orderId;
 var extraData ='';
@@ -22,16 +25,13 @@ var lang = 'vi';
 //before sign HMAC SHA256 with format
 //accessKey=$accessKey&amount=$amount&extraData=$extraData&ipnUrl=$ipnUrl&orderId=$orderId&orderInfo=$orderInfo&partnerCode=$partnerCode&redirectUrl=$redirectUrl&requestId=$requestId&requestType=$requestType
 var rawSignature = "accessKey=" + accessKey + "&amount=" + amount + "&extraData=" + extraData + "&ipnUrl=" + ipnUrl + "&orderId=" + orderId + "&orderInfo=" + orderInfo + "&partnerCode=" + partnerCode + "&redirectUrl=" + redirectUrl + "&requestId=" + requestId + "&requestType=" + requestType;
-//puts raw signature
-console.log("--------------------RAW SIGNATURE----------------")
-console.log(rawSignature)
+
 //signature
 const crypto = require('crypto');
 var signature = crypto.createHmac('sha256', secretKey)
     .update(rawSignature)
     .digest('hex');
-console.log("--------------------SIGNATURE----------------")
-console.log(signature)
+
 
 //json object send to MoMo endpoint
 const requestBody = JSON.stringify({
@@ -64,6 +64,7 @@ const options={
 let result
 try {
     result = await axios(options)
+  
     return res.status(200).json(result.data)
 } catch (error) {
     return res.status(400).json(error)
@@ -79,4 +80,43 @@ const paymentCallback=async(req,res)=>{
         return res.status(400).json({message:"error"})
     }
 }
-module.exports = {payment,paymentCallback}
+const transactionStatus=async(req,res)=>{
+    const {orderId,userId} = req.body
+    const rawSignature = `accessKey=${accessKey}&orderId=${orderId}&partnerCode=MOMO&requestId=${orderId}`
+    const signature =crypto.createHmac('sha256',secretKey).update(rawSignature).digest('hex')
+    const requestBody = JSON.stringify({
+        partnerCode : 'MOMO',
+        orderId : orderId,
+        requestId : orderId,
+        signature : signature,
+        lang: 'vi'
+    })
+    const options={
+        method:"POST",
+        url:"https://test-payment.momo.vn/v2/gateway/api/query",
+        headers:{
+            "Content-Type":"application/json",
+            "Content-Length":Buffer.byteLength(requestBody)
+        },
+        data:requestBody
+    }
+    let result
+    try {
+        result = await axios(options)
+        const db=getDB()
+            if(result.data.resultCode ==0){
+                await db.collection('orders').updateOne({ userId: new ObjectId(userId), status: 'pending',paymentMethod:"Momo" }, { $set: { orderId: orderId } });
+                await db.collection("users").updateOne({ _id: new ObjectId(userId) }, { $set: { cart: {} } });
+         
+            }
+            else{
+                await db.collection("orders").deleteOne({userId:userId,status:"pending"})
+            }
+        
+  
+     return res.status(200).json(result.data)
+    } catch (error) {
+        return res.status(400).json(error)
+    }
+}
+module.exports = {payment,paymentCallback,transactionStatus}

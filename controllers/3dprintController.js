@@ -5,7 +5,6 @@ const fs = require("fs");
 const path = require("path");
 const { getDB } = require('../config/db');
 require('dotenv').config();
-
 const postData= async (req,res)=>{
   const db=getDB()
   const {id,data}= req.body
@@ -241,7 +240,7 @@ const processGcodePricing = async (req, res) => {
 
 const confirmOrder = async (req, res) => {
   try {
-    const { fileId, printId, userId, confirm ,price,fileName,gcodeId} = req.body;
+    const { fileId, printId, userId, confirm ,totalPrice,fileName,gcodeId} = req.body;
     const db = getDB();
   
     if (confirm) {
@@ -251,7 +250,8 @@ const confirmOrder = async (req, res) => {
         printId,
         fileId,
         gcodeId,
-        price,
+        totalPrice,
+        ordertype: "Dịch vụ in 3D",
         fileName,
         status: "pending", // Đơn hàng đang chờ xử lý
         createdAt: new Date()

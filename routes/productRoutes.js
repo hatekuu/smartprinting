@@ -11,7 +11,7 @@ router.post('/id', authMiddleware, getProductById);
 router.post('/search', authMiddleware,findProduct);
 router.get('/suggest-keyword',authMiddleware, suggestKeyword);
 router.post('/cart/add',authMiddleware, addToCart);
-router.post('/cart/remove',authMiddleware, removeFromCart);
+router.post('/cart/remove', removeFromCart);
 router.put('/cart/update',authMiddleware, updateCart);
 router.post('/cart/discount',applyDiscount);
 router.get('/cart/getdiscount', authMiddleware, getDiscount);

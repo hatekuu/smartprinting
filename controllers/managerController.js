@@ -225,34 +225,40 @@ const getPromotionEffectiveness = async (req, res) => {
 };
 const addPrinter = async (req, res) => {
   try {
-    const { Name, Type,Filament,Color,Size,url,api } = req.body;
+    const { Name, Type, Filament, Color, Size, url, api, printInfo } = req.body;
     const db = getDB();
-    const result = await db.collection('printer').insertOne({ 
+    
+    const result = await db.collection('printer').insertOne({
       url,
       api,
-      fileList:[],
-      fileContent:"",
-      state:"",
-      fileId:"",
-      command:"",
-      lasUpdated: new Date(),
-      Printer:{Name, Type,Filament,Color,Size }});
+      fileList: [],
+      fileContent: "",
+      state: "",
+      fileId: "",
+      command: "",
+      lastUpdated: new Date(),
+      Printer: { Name, Type, Filament, Color, Size },
+      printInfo: printInfo || {} // Thêm printInfo vào đây
+    });
+
     if (result.insertedCount === 0) {
       return res.status(500).json({ message: 'Lỗi khi thêm máy in' });
     }
+
     res.status(200).json({ message: 'Đã thêm máy in' });
   } catch (error) {
     res.status(500).json({ message: 'Lỗi khi thêm máy in', error: error.message });
   }
-}
+};
+
 const updatePrinter = async (req, res) => {
   try {
-  
-    const { Name, Type, Filament, Color, Size, url, api,id } = req.body;
- 
+    const { Name, Type, Filament, Color, Size, url, api, id, printInfo } = req.body;
+
     if (!ObjectId.isValid(id)) {
       return res.status(400).json({ message: 'ID không hợp lệ' });
     }
+
     const db = getDB();
 
     const result = await db.collection('3dprint').updateOne(
@@ -262,7 +268,8 @@ const updatePrinter = async (req, res) => {
           url,
           api,
           lastUpdated: new Date(),
-          Printer: { Name, Type, Filament, Color, Size }
+          Printer: { Name, Type, Filament, Color, Size },
+          printInfo: printInfo || {} // Thêm printInfo vào đây
         }
       }
     );
@@ -270,11 +277,13 @@ const updatePrinter = async (req, res) => {
     if (result.matchedCount === 0) {
       return res.status(404).json({ message: 'Không tìm thấy máy in' });
     }
-    res.status(200).json({ message: 'Cập nhật thành công' ,result});
+
+    res.status(200).json({ message: 'Cập nhật thành công', result });
   } catch (error) {
     res.status(500).json({ message: 'Lỗi khi cập nhật máy in', error: error.message });
   }
 };
+
 
 const deletePrinter = async (req, res) => {
   try {

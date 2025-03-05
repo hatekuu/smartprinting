@@ -3,30 +3,35 @@ const { getDB } = require('../config/db');
 
 const getProducts = async (req, res) => {
   try {
-    const { limit = 10, page = 1, sortBy = 'name', order = 'asc' } = req.query;
-
-    // Chuyển đổi thành số
-    const limitValue = parseInt(limit, 10);
-    const pageValue = parseInt(page, 10);
+    const { limit = 10, page = 1, sortBy = 'name', order = 'asc', category, minPrice, maxPrice } = req.query;
+    const limitValue = Math.max(parseInt(limit, 10) || 10, 1); // Đảm bảo limit >= 1
+    const pageValue = Math.max(parseInt(page, 10) || 1, 1); // Đảm bảo page >= 1
     const orderValue = order === 'asc' ? 1 : -1;
-
+    
+    const query = {};
+    if (category) query.category = category; // Lọc theo danh mục sản phẩm
+    if (minPrice) query.price = { ...query.price, $gte: parseFloat(minPrice) };
+    if (maxPrice&&minPrice<maxPrice) query.price = { ...query.price, $lte: parseFloat(maxPrice) };
+  
     const db = getDB();
     const products = await db
       .collection('products')
-      .find({})
-      .sort({ [sortBy]: orderValue }) // Sắp xếp theo sortBy
-      .skip((pageValue - 1) * limitValue) // Bỏ qua sản phẩm của trang trước
-      .limit(limitValue) // Giới hạn số sản phẩm
+      .find(query)
+      .sort({ [sortBy]: orderValue })
+      .skip((pageValue - 1) * limitValue)
+      .limit(limitValue)
+
       .toArray();
 
-    const totalProducts = await db.collection('products').countDocuments();
+    const totalProducts = await db.collection('products').countDocuments(query);
 
-    res.json({ products, currentPage: pageValue, totalProducts });
+    res.json({ products, currentPage: pageValue, totalProducts, totalPages: Math.ceil(totalProducts / limitValue) });
   } catch (error) {
     console.error('Lỗi lấy danh sách sản phẩm:', error.message);
     res.status(500).json({ message: 'Lỗi lấy danh sách sản phẩm' });
   }
 };
+
 const getProductById = async (req, res) => {
   try {
     const { id } = req.body;
@@ -151,20 +156,22 @@ const removeFromCart = async (req, res) => {
       { _id: new ObjectId(userId), 'cart.products.productId': new ObjectId(productId) },
       { projection: { 'cart.products.$': 1 } }
     );
-    
+ 
     if (!user || !user.cart || !user.cart.products || user.cart.products.length === 0) {
       return res.status(404).json({ message: 'Sản phẩm không tồn tại trong giỏ hàng' });
     }
 
     const quantity = user.cart.products[0].quantity; // Số lượng sản phẩm cần cộng lại vào stock
-
+ 
     // Xóa sản phẩm khỏi giỏ hàng
     await db.collection('users').updateOne(
-      { _id: new ObjectId(userId) },
-      { $pull: { 'cart.products': { productId: new ObjectId(productId) } } },
-      {$set:cart.code=""}
-    );
+        { _id: new ObjectId(userId) },
+        { $pull: { 'cart.products': { productId: new ObjectId(productId) } } },
+        { $set: { "code": "" } }
+      );
  
+  
+
     // Cộng lại stock cho sản phẩm
     await db.collection('products').updateOne(
       { _id: new ObjectId(productId) },
@@ -394,7 +401,7 @@ const applyDiscount = async (req, res) => {
 // Xác nhận đơn hàng
 const checkout = async (req, res) => {
   try {
-    const { userId,address,discountId ,totalPrice} = req.body;
+    const { userId,address,discountId ,totalPrice,paymentMethod} = req.body;
     
     if (!ObjectId.isValid(userId)) {
       return res.status(400).json({ message: 'Dữ liệu không hợp lệ' });
@@ -411,33 +418,35 @@ const checkout = async (req, res) => {
     const order = {
       userId: new ObjectId(userId),
       totalPrice,
+      ordertype:"Đơn hàng sản phẩm",
       products: user.cart.products,
       address: Number(address),
       status: 'pending',
       createdAt: new Date(),
-      ...(discountId ? { discountId: discountId } : {}) // Nếu discount có giá trị, thêm vào object
+      paymentMethod,
     };
     const result = await db.collection('orders').insertOne(order);
-    await db.collection('users').updateOne({ _id: new ObjectId(userId) }, { $set: {cart:{}}} );
-    const check = await db.collection('discounts').updateOne(
-      { _id: new ObjectId(discountId), "user.userId": userId }, // Kiểm tra nếu user đã tồn tại
-      { $inc: { "user.$.amountUsed": 1 } } // Nếu có, tăng amountUsed lên 1
-  );
-  
-  // Nếu user chưa có trong danh sách user, thêm mới
-  if (check.modifiedCount === 0) {
-      await db.collection('discounts').updateOne(
-          { _id: new ObjectId(discountId) },
-          { $push: { user: { userId: userId, amountUsed: 1 } } } // Thêm user mới với amountUsed = 1
-      );
-  }
-  
+    if (paymentMethod==="Cash"){
+      await db.collection('users').updateOne({ _id: new ObjectId(userId) }, { $set: {cart:{}}} );
+      const check = await db.collection('discounts').updateOne(
+        { _id: new ObjectId(discountId), "user.userId": userId }, // Kiểm tra nếu user đã tồn tại
+        { $inc: { "user.$.amountUsed": 1 } } // Nếu có, tăng amountUsed lên 1
+    );
+    
+    // Nếu user chưa có trong danh sách user, thêm mới
+    if (check.modifiedCount === 0) {
+        await db.collection('discounts').updateOne(
+            { _id: new ObjectId(discountId) },
+            { $push: { user: { userId: userId, amountUsed: 1 } } } // Thêm user mới với amountUsed = 1
+        );
+    }
+    
+    }
       return res.json({ message: 'Đơn hàng đã được xác nhận', orderId: result.insertedId });
   } catch (error) {
     return res.status(500).json({ message: 'Lỗi xác nhận đơn hàng', error });
   }
 };
-
 //  Lấy danh sách sản phẩm trong giỏ hàng
 const getCart = async (req, res) => {
   try {
