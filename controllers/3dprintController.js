@@ -221,7 +221,7 @@ const processGcodePricing = async (req, res) => {
       return stage;
     });
     const gcodeFiles = await db.collection("gcodefile").aggregate(modifiedPipeline).toArray();
-
+    
     if (gcodeFiles.length === 0) {
       return res.status(202).json({ message: "Không thể đọc thông số từ bất kỳ file G-code nào!" });
     }

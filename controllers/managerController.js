@@ -18,7 +18,7 @@ const getAllUsers = async (req, res) => {
 };
 const addProduct = async (req, res) => {
   try {
-    const { name, price,priceBuy, description, stock,category } = req.body;
+    const { name, price,costPrice, description, stock,category } = req.body;
     if (!name || !price || !description ) {
       return res.status(400).json({ message: 'Thiếu thông tin sản phẩm' });
     }
@@ -26,7 +26,7 @@ const addProduct = async (req, res) => {
     const result = await db.collection('products').insertOne({
       name,
       price,
-      priceBuy,
+      costPrice,
       description,
       category,
       stock,
@@ -42,7 +42,7 @@ const addProduct = async (req, res) => {
 
 const updateProduct = async (req, res) => {
   try {
-    const { _id, name, price,priceBuy, description, stock,category } = req.body;
+    const { _id, name, price,costPrice, description, stock,category } = req.body;
 
     if (!_id || !ObjectId.isValid(_id)) {
       return res.status(400).json({ message: 'ID không hợp lệ' });
@@ -52,7 +52,7 @@ const updateProduct = async (req, res) => {
     if (name) updateData.name = name;
     if (name) updateData.category = category;
     if (price) updateData.price = Number(price);
-    if (priceBuy) updateData.price = Number(priceBuy);
+    if (costPrice) updateData.price = Number(costPrice);
     if (description) updateData.description = description;
     if (stock !== undefined) updateData.stock = Number(stock);
 
@@ -227,8 +227,11 @@ const addPrinter = async (req, res) => {
   try {
     const { Name, Type, Filament, Color, Size, url, api, printInfo } = req.body;
     const db = getDB();
+    if (!Name || !Type || !Filament || !Color || !Size || !url || !api||printInfo) {
+      return res.status(400).json({ message: 'Thiếu thông tin máy in' });
+    }
     
-    const result = await db.collection('printer').insertOne({
+    const result = await db.collection('3dprint').insertOne({
       url,
       api,
       fileList: [],
