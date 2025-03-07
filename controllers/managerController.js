@@ -23,6 +23,10 @@ const addProduct = async (req, res) => {
       return res.status(400).json({ message: 'Thiếu thông tin sản phẩm' });
     }
     const db = getDB();
+    const existingProduct = await db.collection('products').findOne({ name });
+    if (existingProduct) {
+      return res.status(400).json({ message: 'Sản phẩm đã tồn tại' });
+    }
     const result = await db.collection('products').insertOne({
       name,
       price,
@@ -321,7 +325,7 @@ const getPrinter = async (req, res) => {
 
 const calculateRevenueByTime = async (req, res) => {
   const { category, startDate, endDate, page = 1, limit = 10 } = req.body;
-
+console.log(req.body)
   if (!startDate || !endDate) {
     return res.status(400).json({ error: "Vui lòng cung cấp startDate và endDate!" });
   }
@@ -347,11 +351,17 @@ const calculateRevenueByTime = async (req, res) => {
       if (stage.$match && stage.$match.createdAt) {
         stage.$match.createdAt = { $gte: start, $lte: end };
       }
-      if (category && stage.$match && stage.$match["productDetails.category"]) {
+      if (category&&category!="None" && stage.$match && stage.$match["productDetails.category"]) {
         stage.$match["productDetails.category"] = category;
       }
+        // Nếu không có category, loại bỏ điều kiện lọc category
+        if (category=="None"  && stage.$match && stage.$match["productDetails.category"]) {
+          stage.$match["productDetails.category"] = category;
+          delete stage.$match["productDetails.category"];
+        }
+      
       return stage;
-    });
+    }).filter(stage => !(stage.$match && Object.keys(stage.$match).length === 0));
 
     // Thêm `$facet` để tính tổng sản phẩm
     modifiedPipeline.push({

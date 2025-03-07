@@ -5,26 +5,64 @@ const fs = require("fs");
 const path = require("path");
 const { getDB } = require('../config/db');
 require('dotenv').config();
-const postData= async (req,res)=>{
-  const db=getDB()
-  const {id,data}= req.body
-  if (!id || !ObjectId.isValid(id)) {
-    return res.status(400).json({ message: 'ID không hợp lệ hoặc thiếu ID' });
-  }
+
+const postData = async (req, res) => {
   try {
+    const db = getDB();
+    const { id, data } = req.body;
+
+    // Kiểm tra ID hợp lệ
+    if (!id || !ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'ID không hợp lệ hoặc thiếu ID' });
+    }
+
+    // Kiểm tra dữ liệu hợp lệ
+    if (!data || typeof data !== 'object') {
+      return res.status(400).json({ message: 'Dữ liệu không hợp lệ' });
+    }
+
+    //  Cập nhật dữ liệu máy in
     const updateResult = await db.collection('3dprint').updateOne(
       { _id: new ObjectId(id) },
-      { $set: {data:data} },
+      { $set: { data: data } },
       { upsert: true }
     );
+
+    // Kiểm tra `tem_data` có tồn tại không trước khi truy cập
+    if (data.tem_data && Array.isArray(data.tem_data) && data.tem_data.length > 0) {
+      const temperatureData = data.tem_data[0]?.temperature?.tool0?.actual;
+
+      if (temperatureData !== undefined) {
+        // Cập nhật nhiệt độ vào collection "temp" với tối đa 5 phần tử
+        await db.collection("temp").updateOne(
+          { _id: new ObjectId(id) },
+          { 
+            $push: {
+              data: {
+                $each: [{ temperature: temperatureData, date: new Date() }], // Thêm 1 phần tử mới
+                $slice: -20 // Chỉ giữ lại 5 phần tử cuối cùng
+              }
+            }
+          },
+          { upsert: true }
+        );
+      }
+    }
+
+    // Kiểm tra xem có tài liệu nào được cập nhật không
     if (updateResult.matchedCount === 0 && updateResult.upsertedCount === 0) {
       return res.status(404).json({ message: 'Không tìm thấy tài liệu để cập nhật' });
     }
-    return res.status(200).json({message:"Đã cập nhật thành công dữ liệu từ máy in"})
+
+    return res.status(200).json({ message: "Đã cập nhật thành công dữ liệu từ máy in" });
+
   } catch (error) {
-    
+    console.error("Lỗi khi cập nhật dữ liệu:", error);
+    return res.status(500).json({ message: "Lỗi máy chủ, không thể cập nhật dữ liệu" });
   }
-}
+};
+
+
 const getCommandAndUpdateStatus = async (req, res) => {
   let command = {}; // Tránh lỗi nếu có lỗi xảy ra trước khi command được gán giá trị
   try {
@@ -126,7 +164,7 @@ const getCommandAndUpdateStatus = async (req, res) => {
 
 const uploadGcodeFile = async (req, res) => {
   try {
-    const { fileName, fileContent,process } = req.body;
+    const { fileName, fileContent,process,isLast } = req.body;
     const db = getDB();
     const fileData = await db.collection('stlFile').findOne({ status: { $eq: 'done' }})
     if (!fileData) {
@@ -134,7 +172,7 @@ const uploadGcodeFile = async (req, res) => {
     }    
     const {fileId,userId,printId}=fileData
     const newFileName = userId + "_" + fileId+"_"+fileName; 
-    if(process=='done'){
+    if(process=='done'&&isLast){
      await db.collection('stlFile').updateOne({fileId:fileId},{$set:{status:"order-not-confirm"}})
 
     }
@@ -240,7 +278,7 @@ const processGcodePricing = async (req, res) => {
 
 const confirmOrder = async (req, res) => {
   try {
-    const { fileId, printId, userId, confirm ,totalPrice,fileName,gcodeId} = req.body;
+    const { fileId, printId, userId, confirm ,totalPrice,address,paymentMethod,fileName} = req.body;
     const db = getDB();
   
     if (confirm) {
@@ -249,16 +287,19 @@ const confirmOrder = async (req, res) => {
         userId:new ObjectId(userId),
         printId,
         fileId,
-        gcodeId,
-        totalPrice,
-        ordertype: "Dịch vụ in 3D",
         fileName,
+        totalPrice,
+        paymentMethod,
+        address,
+        ordertype: "Dịch vụ in 3D",
         status: "pending", // Đơn hàng đang chờ xử lý
         createdAt: new Date()
       };
       await db.collection("orders").insertOne(order);
-      await db.collection("gcodefile").updateOne({ _id:new ObjectId(gcodeId) }, { $set: { status: "confirm" } });
+      if(paymentMethod=="Cash"){
+      await db.collection("gcodefile").updateMany({ fileId:fileId }, { $set: { status: "confirm" } });
       await db.collection("3dprint").updateOne({ _id:new ObjectId(printId) }, { $set: { state: "writing" } });
+      }
       return res.status(200).json({ message: "Đơn hàng đã được tạo!" });
     } else {
       // Nếu user từ chối, xóa dữ liệu liên quan

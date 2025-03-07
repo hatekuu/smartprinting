@@ -8,10 +8,15 @@ var secretKey = 'K951B6PE1waDMi640xX08PD3vg6EkVlz';
 const payment=async(req,res)=>{
 //https://developers.momo.vn/#/docs/en/aiov2/?id=payment-method
 //parameters
-const {amount}=req.body
+const {amount,orderType}=req.body
 var orderInfo = 'pay with MoMo';
 var partnerCode = 'MOMO';
-var redirectUrl = `${process.env.URL}/smart3D/products/cart`;
+if(orderType=="3dPrint"){
+    var redirectUrl = `${process.env.URL}/smart3D/products/bills`;
+}else if(orderType=="products"){
+    var redirectUrl = `${process.env.URL}/smart3D/products/cart`;
+}
+
 var ipnUrl = process.env.CALL_BACK;
 var requestType = "payWithMethod";
 
@@ -63,12 +68,16 @@ const options={
 }   
 let result
 try {
-    result = await axios(options)
-  
-    return res.status(200).json(result.data)
+    result = await axios(options);
+    return res.status(200).json(result.data);
 } catch (error) {
-    return res.status(400).json(error)
+    console.error("Payment request error:", error.response ? error.response.data : error.message);
+    return res.status(400).json({
+        message: 'Payment request failed',
+        error: error.response ? error.response.data : error.message
+    });
 }
+
 }
 const paymentCallback=async(req,res)=>{
     try {
@@ -81,7 +90,9 @@ const paymentCallback=async(req,res)=>{
     }
 }
 const transactionStatus=async(req,res)=>{
-    const {orderId,userId} = req.body
+    const db=getDB()
+    const {orderId,userId,orderType} = req.body
+
     const rawSignature = `accessKey=${accessKey}&orderId=${orderId}&partnerCode=MOMO&requestId=${orderId}`
     const signature =crypto.createHmac('sha256',secretKey).update(rawSignature).digest('hex')
     const requestBody = JSON.stringify({
@@ -100,21 +111,42 @@ const transactionStatus=async(req,res)=>{
         },
         data:requestBody
     }
-    let result
+    // let result
     try {
         result = await axios(options)
-        const db=getDB()
+    
             if(result.data.resultCode ==0){
-                await db.collection('orders').updateOne({ userId: new ObjectId(userId), status: 'pending',paymentMethod:"Momo" }, { $set: { orderId: orderId } });
-                await db.collection("users").updateOne({ _id: new ObjectId(userId) }, { $set: { cart: {} } });
+                if(orderType=="3dPrint"){
+                    await db.collection('orders').updateOne({ userId: new ObjectId(userId),status: 'pending',paymentMethod:"Momo" }, { $set: { orderId: orderId } });
+                    await db.collection("gcodefile").updateMany({ userId:userId }, { $set: { status: "confirm" } });
+                    const file= await db.collection("gcodefile").findOne({userId:userId})
+                    const printId=file.printId
+                    await db.collection("3dprint").updateOne({ _id: new ObjectId(printId) }, { $set: { state: "writing" } });
          
+                }
+                else if(orderType=="products"){
+                    await db.collection('orders').updateOne({ userId: new ObjectId(userId), status: 'pending',paymentMethod:"Momo" }, { $set: { orderId: orderId } });
+                    await db.collection("users").updateOne({ _id: new ObjectId(userId) }, { $set: { cart: {} } });
+                }
             }
             else{
-                await db.collection("orders").deleteOne({userId:userId,status:"pending"})
+                if(orderType=="3dPrint"){
+                    await db.collection("orders").deleteOne({userId:userId,status:"pending"})
+                }
+                else if(orderType=="products"){
+                    await db.collection("orders").deleteOne({userId:userId,status:"pending"})
+                }
+               
             }
-        
+      
+                
+            return res.status(200).json(result.data)
+      
+      
+          
+       
   
-     return res.status(200).json(result.data)
+     
     } catch (error) {
         return res.status(400).json(error)
     }
