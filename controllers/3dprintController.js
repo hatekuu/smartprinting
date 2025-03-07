@@ -279,8 +279,17 @@ const processGcodePricing = async (req, res) => {
 const confirmOrder = async (req, res) => {
   try {
     const { fileId, printId, userId, confirm ,totalPrice,address,paymentMethod,fileName} = req.body;
+
     const db = getDB();
-  
+    let status = "";
+    if(paymentMethod=="Cash"){
+      status="pending"
+      await db.collection("gcodefile").updateMany({ fileId:fileId }, { $set: { status: "confirm" } });
+      await db.collection("3dprint").updateOne({ _id:new ObjectId(printId) }, { $set: { state: "writing" } });
+    }
+    if(paymentMethod=="Momo"){
+      status="paynt"
+    }
     if (confirm) {
       // Nếu user đồng ý, tạo đơn hàng
       const order = {
@@ -290,16 +299,14 @@ const confirmOrder = async (req, res) => {
         fileName,
         totalPrice,
         paymentMethod,
-        address,
+        address:Number(address),
         ordertype: "Dịch vụ in 3D",
-        status: "pending", // Đơn hàng đang chờ xử lý
+        status:status,
         createdAt: new Date()
       };
+      await db.collection("orders").deleteOne({userId: new ObjectId(userId),status:"paynt"})
       await db.collection("orders").insertOne(order);
-      if(paymentMethod=="Cash"){
-      await db.collection("gcodefile").updateMany({ fileId:fileId }, { $set: { status: "confirm" } });
-      await db.collection("3dprint").updateOne({ _id:new ObjectId(printId) }, { $set: { state: "writing" } });
-      }
+   
       return res.status(200).json({ message: "Đơn hàng đã được tạo!" });
     } else {
       // Nếu user từ chối, xóa dữ liệu liên quan

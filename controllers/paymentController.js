@@ -117,7 +117,11 @@ const transactionStatus=async(req,res)=>{
     
             if(result.data.resultCode ==0){
                 if(orderType=="3dPrint"){
-                    await db.collection('orders').updateOne({ userId: new ObjectId(userId),status: 'pending',paymentMethod:"Momo" }, { $set: { orderId: orderId } });
+                    await db.collection('orders').updateOne(
+                        { userId: new ObjectId(userId), status: 'paynt', paymentMethod: "Momo" },
+                        { $set: { orderId: orderId, status: 'pending' } } 
+                    );
+                    
                     await db.collection("gcodefile").updateMany({ userId:userId }, { $set: { status: "confirm" } });
                     const file= await db.collection("gcodefile").findOne({userId:userId})
                     const printId=file.printId
@@ -134,7 +138,7 @@ const transactionStatus=async(req,res)=>{
                     await db.collection("orders").deleteOne({userId:userId,status:"pending"})
                 }
                 else if(orderType=="products"){
-                    await db.collection("orders").deleteOne({userId:userId,status:"pending"})
+                    await db.collection("orders").deleteOne({userId:userId,status:"paynt"})
                 }
                
             }
