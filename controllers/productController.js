@@ -603,31 +603,35 @@ const reviewProduct = async (req, res) => {
   }
 };
 //  Yêu cầu đổi/trả hàng
-const requestReturn = async (req, res) => {
-  try {
-    const { orderId, reason } = req.body;
-    if (!ObjectId.isValid(orderId) || !reason) {
-      return res.status(400).json({ message: 'Dữ liệu không hợp lệ' });
-    }
-    const db = getDB();
-    await db.collection('returns').insertOne({ orderId: new ObjectId(orderId), reason, status: 'đang xử lý', createdAt: new Date() });
-    return res.json({ message: 'Yêu cầu đổi/trả đã được gửi' });
-  } catch (error) {
-    return res.status(500).json({ message: 'Lỗi yêu cầu đổi/trả', error });
-  }
-};
+// const requestReturn = async (req, res) => {
+//   try {
+//     const { orderId, reason } = req.body;
+//     if (!ObjectId.isValid(orderId) || !reason) {
+//       return res.status(400).json({ message: 'Dữ liệu không hợp lệ' });
+//     }
+//     const db = getDB();
+//     await db.collection('orders').updateOne({ orderId: new ObjectId(orderId;
+//     return res.json({ message: 'Yêu cầu đổi/trả đã được gửi' });
+//   } catch (error) {
+//     return res.status(500).json({ message: 'Lỗi yêu cầu đổi/trả', error });
+//   }
+// };
 // Hủy đơn hàng
 const cancelOrder = async (req, res) => {
   try {
     const { userId, orderId } = req.body;
     const db = getDB();
-
+    
     const order = await db.collection("orders").findOne({ _id: new ObjectId(orderId), userId: new ObjectId(userId) });
 
     if (!order) {
       return res.status(404).json({ message: "Không tìm thấy đơn hàng" });
     }
-
+    const date= new Date()
+    const createdAt = new Date(order.createdAt);
+if (date - createdAt > 24 * 60 * 60 * 1000) {
+  return res.status(405).json({message:"không thể hủy đơn hàng vì đã quá 24h"})
+}
     if (order.status !== "pending") {
       return res.status(400).json({ message: "Không thể hủy đơn hàng này" });
     }
