@@ -230,8 +230,9 @@ const getPromotionEffectiveness = async (req, res) => {
 const addPrinter = async (req, res) => {
   try {
     const { Name, Type, Filament, Color, Size, url, api, printInfo } = req.body;
+  
     const db = getDB();
-    if (!Name || !Type || !Filament || !Color || !Size || !url || !api||printInfo) {
+    if (!Name || !Type || !Filament || !Color || !Size || !url || !api||!printInfo) {
       return res.status(400).json({ message: 'Thiếu thông tin máy in' });
     }
     

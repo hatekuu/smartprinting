@@ -603,19 +603,19 @@ const reviewProduct = async (req, res) => {
   }
 };
 //  Yêu cầu đổi/trả hàng
-// const requestReturn = async (req, res) => {
-//   try {
-//     const { orderId, reason } = req.body;
-//     if (!ObjectId.isValid(orderId) || !reason) {
-//       return res.status(400).json({ message: 'Dữ liệu không hợp lệ' });
-//     }
-//     const db = getDB();
-//     await db.collection('orders').updateOne({ orderId: new ObjectId(orderId;
-//     return res.json({ message: 'Yêu cầu đổi/trả đã được gửi' });
-//   } catch (error) {
-//     return res.status(500).json({ message: 'Lỗi yêu cầu đổi/trả', error });
-//   }
-// };
+const requestReturn = async (req, res) => {
+  // try {
+  //   const { orderId, reason } = req.body;
+  //   if (!ObjectId.isValid(orderId) || !reason) {
+  //     return res.status(400).json({ message: 'Dữ liệu không hợp lệ' });
+  //   }
+  //   const db = getDB();
+  //   await db.collection('orders').updateOne({ orderId: new ObjectId(orderId;
+  //   return res.json({ message: 'Yêu cầu đổi/trả đã được gửi' });
+  // } catch (error) {
+  //   return res.status(500).json({ message: 'Lỗi yêu cầu đổi/trả', error });
+  // }
+};
 // Hủy đơn hàng
 const cancelOrder = async (req, res) => {
   try {
