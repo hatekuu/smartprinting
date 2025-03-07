@@ -32,9 +32,11 @@ const register = async (req, res) => {
     // Thêm người dùng vào database
     await collection.insertOne({
       username,
+      address:[],
       password: hashedPassword,
       secretKey: hashedSecretKey,
       role: role === 'manager' ? 'manager' : 'user', // Giới hạn vai trò
+     
     });
 
     res.status(201).json({ message: 'Đăng ký thành công!' });
